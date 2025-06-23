@@ -61,6 +61,7 @@
 #define SETUP_DELAY 500
 #define ENABLE_USB_LOGGING  0
 #define ENABLE_BV_TX        1
+
 /* USER CODE END Includes */
 
 /* Private variables ---------------------------------------------------------*/
