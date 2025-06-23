@@ -52,7 +52,7 @@
 #include "usart.h"
 #include "usb_device.h"
 #include "gpio.h"
-#include "bill_validator.h"
+
 /* USER CODE BEGIN Includes */
 #include "usbd_cdc_if.h"
 
