@@ -1,0 +1,3 @@
+../Core/Src/bill_validator.c:140:13:bill_validator_init	1
+../Core/Src/bill_validator.c:148:13:bill_validator_process	1
+../Core/Src/bill_validator.c:156:13:bill_validator_check	1
