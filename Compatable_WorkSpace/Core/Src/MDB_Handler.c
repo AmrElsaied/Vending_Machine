@@ -246,9 +246,9 @@ static void mdbCMDProcessTask(void *argument)
     for (;;)
     {
         /* Block until rxTask notifies us with an index value */
-        xTaskNotifyWait(0,                		  /* don’t clear bits          */
-                        0,                		  /* don’t clear bits          */
-                        &CMD_Index,             /* returns the cmd index     */
+        xTaskNotifyWait(0,                		/* don’t clear bits          */
+			UINT32_MAX,                	/* don’t clear bits          */
+                        &CMD_Index,             	/* returns the cmd index     */
                         portMAX_DELAY);
 
         /* Handle & respond */
