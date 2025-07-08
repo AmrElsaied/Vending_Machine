@@ -34,8 +34,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define ENABLE_USB_LOGGING  0
-#define ENABLE_BV_TX        1
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -54,7 +53,7 @@ const osThreadAttr_t defaultTask_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE BEGIN PV */
-bool Vending_EN = false;
+
 
 /* USER CODE END PV */
 
@@ -65,8 +64,6 @@ static void MX_USART1_UART_Init(void);
 void StartDefaultTask(void *argument);
 
 /* USER CODE BEGIN PFP */
-void MDB_HandleCommand(uint16_t *data, uint8_t dataLength);
-void MDB_SendResponseWithModeBit(uint16_t *data, uint8_t dataLength);
 void MDB_Peripheral_Init(void);
 /* USER CODE END PFP */
 
@@ -98,117 +95,8 @@ void MDB_Peripheral_Init(void)
 //  BV_StateManager.BV_CMD_RX_StateHandler = CMD_RX_READY; // Set command reception state to READY
 }
 
-void MDB_SendResponseWithModeBit(uint16_t *data, uint8_t dataLength)
-{
-	HAL_UART_Transmit_IT(&huart1, (uint8_t *)data, dataLength);
-}
 
-void MDB_HandleCommand(uint16_t *BV_RxBuffer, uint8_t length)
-{
-//  switch (BV_StateManager.BV_CMD_Process_StateHandler)
-//  {
-//    case CMD_PROCESS_READY:
-//      if (BV_StateManager.BV_CMD_RX_StateHandler == CMD_RX_DONE)
-//      {
-//        BV_StateManager.BV_CMD_RX_StateHandler = CMD_RX_BUSY; // Set the state to BUSY
-//        BV_StateManager.BV_CMD_Process_StateHandler = CMD_PROCESS_INPROGRESS; // Set the command processing state to INPROGRESS
-//        // Command reception is done, process the command
-//        int temp_index = BV_MDB_BusManager.MDB_RX_CMD_Index;
-//        int temp_length = VMC_CMDs[temp_index].CMD_Length;
-//        if (BV_MDB_BusManager.RXBuffer_index != VMC_CMDs[temp_index].CMD_Length)
-//        {
-//          // Error: Received command length does not match expected length
-//          // TODO Handle error appropriately
-//        }
-//        else
-//        {
-//          if (BV_RxBuffer[(BV_MDB_BusManager.RXBuffer_index)-1] == VMC_CMDs[temp_index].CMD[temp_length-1])
-//          {
-//              // Command is valid, process it
-//            BV_MDB_BusManager.MDB_Process_CMD_Index = temp_index; // Set the command index to the command being processed
-//            if (VMC_CMDs[temp_index].CMD[0] == VMC_CMDs[VMC_CMD_0x0066].CMD[0])
-//            {
-//              switch (BV_StateManager.BV_StateHnadler)
-//              {
-//              case STATE_RESTART:
-//                VMC_CMDs[VMC_CMD_0x0066].CMD_Response[0] = 0x0006;
-//                VMC_CMDs[VMC_CMD_0x0066].CMD_Response[1] = 0x0106;
-//                VMC_CMDs[VMC_CMD_0x0066].CMD_Response_Length = 2;
-//                BV_StateManager.BV_StateHnadler = STATE_DISABLED; // Set the system state to disabled
-//                break;
-//              case STATE_DISABLED:
-//                VMC_CMDs[VMC_CMD_0x0066].CMD_Response[0] = 0x0009;
-//                VMC_CMDs[VMC_CMD_0x0066].CMD_Response[1] = 0x0109;
-//                VMC_CMDs[VMC_CMD_0x0066].CMD_Response_Length = 2;
-//                break;
-//              case STATE_READY:
-//                if (HAL_GPIO_ReadPin(VENDING_GPIO_Port, VENDING_Pin) == GPIO_PIN_RESET
-//                                     && Vending_EN == false)
-//                  {
-//                    VMC_CMDs[VMC_CMD_0x0066].CMD_Response[0] = 0x0083;
-//                    VMC_CMDs[VMC_CMD_0x0066].CMD_Response[1] = 0x0183;
-//                    VMC_CMDs[VMC_CMD_0x0066].CMD_Response_Length = 2;
-//                    Vending_EN = true;
-//                  }
-//                  else
-//                  {
-//                    VMC_CMDs[VMC_CMD_0x0066].CMD_Response[0] = 0x0100;
-//                    VMC_CMDs[VMC_CMD_0x0066].CMD_Response_Length = 1;
-//                  }
-//                  if (HAL_GPIO_ReadPin(VENDING_GPIO_Port, VENDING_Pin) == GPIO_PIN_SET
-//                                     && Vending_EN == true)
-//                  {
-//                    Vending_EN = false;
-//                  }
-//                break;
-//              default:
-//                BV_StateManager.BV_StateHnadler = STATE_ERROR; // Set the system state to error
-//                break;
-//              }
-//            }
-//            else if (VMC_CMDs[temp_index].CMD[0] == VMC_CMDs[VMC_CMD_0x009D].CMD[0])
-//            {
-//              BV_StateManager.BV_StateHnadler = STATE_READY; // Set the system state to ready
-//            }
-//            // Send the response
-//            #if ENABLE_BV_TX == 1
-//            MDB_SendResponseWithModeBit(VMC_CMDs[BV_MDB_BusManager.MDB_Process_CMD_Index].CMD_Response,
-//                                        VMC_CMDs[BV_MDB_BusManager.MDB_Process_CMD_Index].CMD_Response_Length);
-//            #endif
-//          }
-//          else
-//          {
-//              // Error: Received command does not match expected command
-//              // TODO Handle error appropriately
-//          }
-//        }
-//        // Reset the RX for a new command
-//        BV_StateManager.BV_CMD_RX_StateHandler = CMD_RX_READY; // Set the state to READY for the next command
-//        BV_StateManager.BV_CMD_Process_StateHandler = CMD_PROCESS_READY; // Set the command processing state to DONE
-//        BV_MDB_BusManager.RXBuffer_index = 0; // Reset the RX buffer index
-//      }
-//      else
-//      {
-//        // No CMD to be processed
-//        // This means we are still waiting for the command to be fully received
-//        return;
-//      }
-//      break;
-//    case CMD_PROCESS_INPROGRESS:
-//      // Error: Command processing state is already in progress
-//      // TODO Handle error appropriately
-//      return;
-//    case CMD_PROCESS_DONE:
-//      // Command processing is done, reset the state
-//      BV_StateManager.BV_CMD_Process_StateHandler = CMD_PROCESS_READY; // Set the command processing state to READY
-//      BV_MDB_BusManager.RXBuffer_index = 0; // Reset the RX buffer index for the next command
-//      break;
-//    default:
-//      // Error: Command processing state is not ready or in progress
-//      // TODO Handle error appropriately
-//      return;
-//  }
-}
+
 
 /* USER CODE END 0 */
 
@@ -291,8 +179,6 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-//	  MDB_HandleCommand(BV_MDB_BusManager.MDB_RXbuffer, BV_MDB_BusManager.RXBuffer_index);
-
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
