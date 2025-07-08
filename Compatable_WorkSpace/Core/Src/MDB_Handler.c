@@ -54,11 +54,14 @@ MDB_BusManager_t MDB_BusManager = {
     .MDB_Process_CMD_Index = VMC_CMD_MAX_NUMBER /* Initialize to a default value */
 };
 
+bool Vending_EN = false;
 /******************************************************************************
  *                         Private Prototypes                                 *
  ******************************************************************************/
 static void mdbRxTask(void *argument);
 static void mdbCMDProcessTask(void *argument);
+static void MDB_HandleCommand(uint16_t *RxBuffer, uint8_t length);
+static void MDB_SendResponseWithModeBit(uint16_t *data, uint8_t dataLength);
 /******************************************************************************
  *                          Public Functions                                  *
  ******************************************************************************/
@@ -219,7 +222,7 @@ static void mdbRxTask(void *argument)
                 if (MDB_BusManager.RXBuffer_index >= CMD_expectedLength)
                 {
                     MDB_BusManager.RXBuffer_index = 0;
-                    MDB_StateManager.CMD_RX_StateHandler = CMD_RX_READY;
+                    MDB_StateManager.CMD_RX_StateHandler = CMD_RX_DONE;
 					/* ---- Notify mdbTask that data is ready --------------------- */
                     xTaskNotify(mdbCMDProcessTaskHandle,
 											(uint32_t)MDB_BusManager.MDB_RX_CMD_Index,
@@ -247,18 +250,112 @@ static void mdbCMDProcessTask(void *argument)
     {
         /* Block until rxTask notifies us with an index value */
         xTaskNotifyWait(0,                		/* don’t clear bits          */
-			UINT32_MAX,                	/* don’t clear bits          */
-                        &CMD_Index,             	/* returns the cmd index     */
-                        portMAX_DELAY);
+			        UINT32_MAX,                	/* don’t clear bits          */
+                    &CMD_Index,             	/* returns the cmd index     */
+                    portMAX_DELAY);
 
         /* Handle & respond */
-        MDB_HandleCommand(VMC_CMDs[CMD_Index].CMD,
-                          VMC_CMDs[CMD_Index].CMD_Length);
-
-        uint16_t *resp = VMC_CMDs[CMD_Index].CMD_Response;
-        uint8_t   len  = VMC_CMDs[CMD_Index].CMD_Response_Length;
-
-        HAL_UART_Transmit_DMA(&huart1, (uint8_t*)resp, len * 2);
+        MDB_HandleCommand(MDB_BusManager.MDB_RXbuffer,
+                          CMD_Index);
         /* notification value auto‑overwritten next time; nothing to clear */
     }
+}
+
+static void MDB_HandleCommand(uint16_t *RxBuffer, uint8_t cmd_index)
+{
+ switch (MDB_StateManager.CMD_Process_StateHandler)
+ {
+   case CMD_PROCESS_READY:
+     MDB_StateManager.CMD_Process_StateHandler = CMD_PROCESS_INPROGRESS; // Set the command processing state to INPROGRESS
+     int temp_length = VMC_CMDs[cmd_index].CMD_Length;
+     if (MDB_StateManager.CMD_RX_StateHandler == CMD_RX_DONE)
+     {
+        MDB_StateManager.CMD_RX_StateHandler = CMD_RX_BUSY; // Set the state to BUSY
+        // Command reception is done, process the command
+        if (RxBuffer[temp_length-1] == VMC_CMDs[cmd_index].CMD[temp_length-1])
+        {
+            // Command is valid, process it
+            MDB_BusManager.MDB_Process_CMD_Index = cmd_index; // Set the command index to the command being processed
+            if (VMC_CMDs[cmd_index].CMD[0] == VMC_CMDs[VMC_CMD_0x0066].CMD[0])
+            {
+                switch (MDB_StateManager.BV_StateHnadler)
+                {
+                case STATE_RESTART:
+                    VMC_CMDs[VMC_CMD_0x0066].CMD_Response[0] = 0x0006;
+                    VMC_CMDs[VMC_CMD_0x0066].CMD_Response[1] = 0x0106;
+                    VMC_CMDs[VMC_CMD_0x0066].CMD_Response_Length = 2;
+                    MDB_StateManager.BV_StateHnadler = STATE_DISABLED; // Set the system state to disabled
+                break;
+                case STATE_DISABLED:
+                    VMC_CMDs[VMC_CMD_0x0066].CMD_Response[0] = 0x0009;
+                    VMC_CMDs[VMC_CMD_0x0066].CMD_Response[1] = 0x0109;
+                    VMC_CMDs[VMC_CMD_0x0066].CMD_Response_Length = 2;
+                break;
+                case STATE_READY:
+                if (HAL_GPIO_ReadPin(VENDING_GPIO_Port, VENDING_Pin) == GPIO_PIN_RESET
+                                    && Vending_EN == false)
+                    {
+                    VMC_CMDs[VMC_CMD_0x0066].CMD_Response[0] = 0x0083;
+                    VMC_CMDs[VMC_CMD_0x0066].CMD_Response[1] = 0x0183;
+                    VMC_CMDs[VMC_CMD_0x0066].CMD_Response_Length = 2;
+                    Vending_EN = true;
+                    }
+                    else
+                    {
+                    VMC_CMDs[VMC_CMD_0x0066].CMD_Response[0] = 0x0100;
+                    VMC_CMDs[VMC_CMD_0x0066].CMD_Response_Length = 1;
+                    }
+                    if (HAL_GPIO_ReadPin(VENDING_GPIO_Port, VENDING_Pin) == GPIO_PIN_SET
+                                    && Vending_EN == true)
+                    {
+                    Vending_EN = false;
+                    }
+                break;
+                default:
+                MDB_StateManager.BV_StateHnadler = STATE_ERROR; // Set the system state to error
+                break;
+                }
+            }
+            else if (VMC_CMDs[cmd_index].CMD[0] == VMC_CMDs[VMC_CMD_0x009D].CMD[0])
+            {
+                MDB_StateManager.BV_StateHnadler = STATE_READY; // Set the system state to ready
+            }
+        // Send the response
+        #if ENABLE_BV_TX == 1
+        MDB_SendResponseWithModeBit(VMC_CMDs[MDB_BusManager.MDB_Process_CMD_Index].CMD_Response,
+                                    VMC_CMDs[MDB_BusManager.MDB_Process_CMD_Index].CMD_Response_Length);
+        #endif
+        }
+        else
+        {
+            // Error: Received command does not match expected command
+            // TODO Handle error appropriately
+        }
+       // Reset the RX for a new command
+       MDB_StateManager.CMD_RX_StateHandler = CMD_RX_READY; // Set the state to READY for the next command
+       MDB_StateManager.CMD_Process_StateHandler = CMD_PROCESS_READY; // Set the command processing state to DONE
+     }
+     else
+     {
+       // No CMD to be processed
+       // This means we are still waiting for the command to be fully received
+       return;
+     }
+     break;
+   case CMD_PROCESS_INPROGRESS:
+     // TODO Handle error appropriately
+     return;
+   case CMD_PROCESS_DONE:
+     // TODO Handle error appropriately
+     break;
+   default:
+     // Error: Command processing state is not ready or in progress
+     // TODO Handle error appropriately
+     return;
+ }
+}
+
+static void MDB_SendResponseWithModeBit(uint16_t *data, uint8_t dataLength)
+{
+	HAL_UART_Transmit_IT(&huart1, (uint8_t *)data, dataLength);
 }
