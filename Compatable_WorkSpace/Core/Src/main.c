@@ -64,7 +64,7 @@ static void MX_USART1_UART_Init(void);
 void StartDefaultTask(void *argument);
 
 /* USER CODE BEGIN PFP */
-void MDB_Peripheral_Init(void);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -87,13 +87,6 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
    HAL_UART_RxCpltCallback(huart);
 }
 
-
-// MDB Peripheral Initialization Function
-void MDB_Peripheral_Init(void)
-{
-//  BV_StateManager.BV_StateHnadler = STATE_RESTART; // Set initial state to RESTART
-//  BV_StateManager.BV_CMD_RX_StateHandler = CMD_RX_READY; // Set command reception state to READY
-}
 
 
 
@@ -132,8 +125,6 @@ int main(void)
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
-  // Initialize MDB Peripheral
-  MDB_Peripheral_Init();
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wmissing-noreturn"
   /* USER CODE END 2 */
@@ -320,7 +311,7 @@ void StartDefaultTask(void *argument)
 
 /**
   * @brief  Period elapsed callback in non blocking mode
-  * @note   This function is called  when TIM1 interrupt took place, inside
+  * @note   This function is called  when TIM4 interrupt took place, inside
   * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
   * a global variable "uwTick" used as application time base.
   * @param  htim : TIM handle
@@ -331,7 +322,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   /* USER CODE BEGIN Callback 0 */
 
   /* USER CODE END Callback 0 */
-  if (htim->Instance == TIM1)
+  if (htim->Instance == TIM4)
   {
     HAL_IncTick();
   }

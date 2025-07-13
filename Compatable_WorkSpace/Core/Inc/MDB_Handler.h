@@ -19,10 +19,6 @@
  ******************************************************************************/
 #include <stdint.h>
 #include <stdbool.h>
-/* FreeRTOS core */
-#include "FreeRTOS.h"
-#include "task.h"
-#include "VMC_Config.h"
 #include "stm32f1xx_hal.h"
 /******************************************************************************
  *                             Module Config                                  *

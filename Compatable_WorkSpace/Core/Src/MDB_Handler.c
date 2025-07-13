@@ -15,6 +15,11 @@
  *                                Includes                                    *
  ******************************************************************************/
 #include "MDB_Handler.h"
+#include "main.h"
+#include "VMC_Config.h"
+/* FreeRTOS core */
+#include "FreeRTOS.h"
+#include "task.h"
 /******************************************************************************
  *                             Module Config                                  *
  ******************************************************************************/
@@ -156,23 +161,22 @@ bool mdbRing_pop(mdb_ring_t *r, uint16_t *word)
 void MDB_TaskCreate(void)
 {
     /* Stack size is in WORDS (not bytes) for xTaskCreate.     */
-    const uint16_t stackWords = 512;                  				/* 512 × 4 B = 2 kB */
 
     xTaskCreate(
     	mdbRxTask,                 									/* task function                   */
         "mdbRxTask",               									/* name (for trace)                */
-        stackWords,              									/* stack size in WORDS             */
+        384,              									/* stack size in WORDS             */
         NULL,                    									/* no pvParameters                 */
         configMAX_PRIORITIES-3,  									/* priority (just below max)       */
         &mdbRxTaskHandle);         									/* return handle                   */
 
     xTaskCreate(
-		mdbCMDProcessTask,                 									/* task function                   */
-        "mdbCMDProcessTask",               									/* name (for trace)                */
-        stackWords,              									/* stack size in WORDS             */
+		mdbCMDProcessTask,                 							/* task function                   */
+        "mdbCMDProcessTask",               							/* name (for trace)                */
+        256,              									    	/* stack size in WORDS             */
         NULL,                    									/* no pvParameters                 */
         configMAX_PRIORITIES-2,  									/* priority (just below max)       */
-        &mdbCMDProcessTaskHandle);         									/* return handle                   */
+        &mdbCMDProcessTaskHandle);         							/* return handle                   */
 
 }
 
@@ -186,13 +190,12 @@ static void mdbRxTask(void *argument)
 {
 	mdbRing_init(&rxRing);
     HAL_UART_Receive_IT(&huart1, (uint8_t*)mdb_rx_buf, 1);
-
+    uint16_t word;
+    uint8_t CMD_expectedLength =0;
     for (;;)
     {
         /* Wait until ISR “gives” a token (see ISR code). */
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-
-        uint16_t word;
         while (mdbRing_pop(&rxRing, &word))
         {
             switch (MDB_StateManager.CMD_RX_StateHandler)
@@ -216,7 +219,7 @@ static void mdbRxTask(void *argument)
                 MDB_BusManager
                    .MDB_RXbuffer[MDB_BusManager.RXBuffer_index++] = word;
 
-                uint8_t CMD_expectedLength =
+                CMD_expectedLength =
                     VMC_CMDs[MDB_BusManager.MDB_RX_CMD_Index].CMD_Length;
 
                 if (MDB_BusManager.RXBuffer_index >= CMD_expectedLength)
@@ -250,7 +253,7 @@ static void mdbCMDProcessTask(void *argument)
     {
         /* Block until rxTask notifies us with an index value */
         xTaskNotifyWait(0,                		/* don’t clear bits          */
-			        UINT32_MAX,                	/* don’t clear bits          */
+			        UINT32_MAX,                	/* clear all bits          */
                     &CMD_Index,             	/* returns the cmd index     */
                     portMAX_DELAY);
 
