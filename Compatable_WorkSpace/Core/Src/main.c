@@ -18,11 +18,13 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "cmsis_os.h"
 #include "usb_device.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "bill_validator.h"
+#include "FreeRTOS.h"
+#include "MDB_Handler.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -32,8 +34,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define ENABLE_USB_LOGGING  0
-#define ENABLE_BV_TX        1
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -44,66 +45,30 @@
 /* Private variables ---------------------------------------------------------*/
 UART_HandleTypeDef huart1;
 
+/* Definitions for defaultTask */
+osThreadId_t defaultTaskHandle;
+const osThreadAttr_t defaultTask_attributes = {
+  .name = "defaultTask",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
 /* USER CODE BEGIN PV */
-bool Vending_EN = false;
-uint16_t mdb_rx_buf[1];
+
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
+void StartDefaultTask(void *argument);
+
 /* USER CODE BEGIN PFP */
-void MDB_HandleCommand(uint16_t *data, uint8_t dataLength);
-void MDB_SendResponseWithModeBit(uint16_t *data, uint8_t dataLength);
-void MDB_Peripheral_Init(void);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-  if (huart == &huart1) {
-    uint16_t word = mdb_rx_buf[0]&0x1FF;
-    // check if the BV_CMD_RXhandler is ready to recieve a new command
-    switch (BV_StateManager.BV_CMD_RX_StateHandler)
-    {
-    case CMD_RX_READY:
-      // Check if the first byte is a valid VMC command
-      for (uint8_t i = 0; i < VMC_CMD_MAX_NUMBER; i++)
-      {
-        if( word == VMC_CMDs[i].CMD[0])
-        {
-          // Command found, recieve rest of the command
-          BV_StateManager.BV_CMD_RX_StateHandler = CMD_RX_INPROGRESS;
-          BV_MDB_BusManager.MDB_RX_CMD_Index = i; // Store the Rx command index
-          BV_MDB_BusManager.MDB_RXbuffer[BV_MDB_BusManager.RXBuffer_index++] = word;
-          break;
-        }
-      }
-      break;
-    case CMD_RX_INPROGRESS:
-      // Store the received word in the RX buffer
-      BV_MDB_BusManager.MDB_RXbuffer[BV_MDB_BusManager.RXBuffer_index++] = word;
-      // Check if the command is fully received
-      if (BV_MDB_BusManager.RXBuffer_index >= VMC_CMDs[BV_MDB_BusManager.MDB_RX_CMD_Index].CMD_Length)
-      {
-        // Command fully received, process it
-        BV_StateManager.BV_CMD_RX_StateHandler = CMD_RX_DONE;
-        // MDB_HandleCommand(BV_MDB_BusManager.MDB_RXbuffer, BV_MDB_BusManager.RXBuffer_index);
-      }
-      break;
-    case CMD_RX_DONE:
-      //TODO handle the state of processing at this time
-      break;
-    case CMD_RX_BUSY:
-      //TODO handle the state of processing at this time
-      break;
-    default:
-      break;
-    }
-    HAL_UART_Receive_IT(huart, (uint8_t *) mdb_rx_buf, 1);
-  }
-}
 
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
 
@@ -123,124 +88,8 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
 }
 
 
-// MDB Peripheral Initialization Function
-void MDB_Peripheral_Init(void)
-{
-  BV_StateManager.BV_StateHnadler = STATE_RESTART; // Set initial state to RESTART
-  BV_StateManager.BV_CMD_RX_StateHandler = CMD_RX_READY; // Set command reception state to READY
-}
 
-void MDB_SendResponseWithModeBit(uint16_t *data, uint8_t dataLength)
-{
-	HAL_UART_Transmit_IT(&huart1, (uint8_t *)data, dataLength);
-}
 
-void MDB_HandleCommand(uint16_t *BV_RxBuffer, uint8_t length)
-{
-  switch (BV_StateManager.BV_CMD_Process_StateHandler)
-  {
-    case CMD_PROCESS_READY:
-      if (BV_StateManager.BV_CMD_RX_StateHandler == CMD_RX_DONE)
-      {
-        BV_StateManager.BV_CMD_RX_StateHandler = CMD_RX_BUSY; // Set the state to BUSY
-        BV_StateManager.BV_CMD_Process_StateHandler = CMD_PROCESS_INPROGRESS; // Set the command processing state to INPROGRESS
-        // Command reception is done, process the command
-        int temp_index = BV_MDB_BusManager.MDB_RX_CMD_Index;
-        int temp_length = VMC_CMDs[temp_index].CMD_Length;
-        if (BV_MDB_BusManager.RXBuffer_index != VMC_CMDs[temp_index].CMD_Length)
-        {
-          // Error: Received command length does not match expected length
-          // TODO Handle error appropriately
-        }
-        else
-        {
-          if (BV_RxBuffer[(BV_MDB_BusManager.RXBuffer_index)-1] == VMC_CMDs[temp_index].CMD[temp_length-1])
-          {
-              // Command is valid, process it
-            BV_MDB_BusManager.MDB_Process_CMD_Index = temp_index; // Set the command index to the command being processed
-            if (VMC_CMDs[temp_index].CMD[0] == VMC_CMDs[VMC_CMD_0x0066].CMD[0])
-            {
-              switch (BV_StateManager.BV_StateHnadler)
-              {
-              case STATE_RESTART:
-                VMC_CMDs[VMC_CMD_0x0066].CMD_Response[0] = 0x0006;
-                VMC_CMDs[VMC_CMD_0x0066].CMD_Response[1] = 0x0106;
-                VMC_CMDs[VMC_CMD_0x0066].CMD_Response_Length = 2;
-                BV_StateManager.BV_StateHnadler = STATE_DISABLED; // Set the system state to disabled
-                break;
-              case STATE_DISABLED:
-                VMC_CMDs[VMC_CMD_0x0066].CMD_Response[0] = 0x0009;
-                VMC_CMDs[VMC_CMD_0x0066].CMD_Response[1] = 0x0109;
-                VMC_CMDs[VMC_CMD_0x0066].CMD_Response_Length = 2;
-                break;
-              case STATE_READY:
-                if (HAL_GPIO_ReadPin(VENDING_GPIO_Port, VENDING_Pin) == GPIO_PIN_RESET
-                                     && Vending_EN == false)
-                  {
-                    VMC_CMDs[VMC_CMD_0x0066].CMD_Response[0] = 0x0083;
-                    VMC_CMDs[VMC_CMD_0x0066].CMD_Response[1] = 0x0183;
-                    VMC_CMDs[VMC_CMD_0x0066].CMD_Response_Length = 2;
-                    Vending_EN = true;
-                  }
-                  else
-                  {
-                    VMC_CMDs[VMC_CMD_0x0066].CMD_Response[0] = 0x0100;
-                    VMC_CMDs[VMC_CMD_0x0066].CMD_Response_Length = 1;
-                  }
-                  if (HAL_GPIO_ReadPin(VENDING_GPIO_Port, VENDING_Pin) == GPIO_PIN_SET
-                                     && Vending_EN == true)
-                  {
-                    Vending_EN = false;
-                  }
-                break;
-              default:
-                BV_StateManager.BV_StateHnadler = STATE_ERROR; // Set the system state to error
-                break;
-              }
-            }
-            else if (VMC_CMDs[temp_index].CMD[0] == VMC_CMDs[VMC_CMD_0x009D].CMD[0])
-            {
-              BV_StateManager.BV_StateHnadler = STATE_READY; // Set the system state to ready
-            }
-            // Send the response
-            #if ENABLE_BV_TX == 1
-            MDB_SendResponseWithModeBit(VMC_CMDs[BV_MDB_BusManager.MDB_Process_CMD_Index].CMD_Response,
-                                        VMC_CMDs[BV_MDB_BusManager.MDB_Process_CMD_Index].CMD_Response_Length);
-            #endif
-          }
-          else
-          {
-              // Error: Received command does not match expected command
-              // TODO Handle error appropriately
-          }
-        }
-        // Reset the RX for a new command
-        BV_StateManager.BV_CMD_RX_StateHandler = CMD_RX_READY; // Set the state to READY for the next command
-        BV_StateManager.BV_CMD_Process_StateHandler = CMD_PROCESS_READY; // Set the command processing state to DONE
-        BV_MDB_BusManager.RXBuffer_index = 0; // Reset the RX buffer index
-      }
-      else
-      {
-        // No CMD to be processed
-        // This means we are still waiting for the command to be fully received
-        return;
-      }
-      break;
-    case CMD_PROCESS_INPROGRESS:
-      // Error: Command processing state is already in progress
-      // TODO Handle error appropriately
-      return;
-    case CMD_PROCESS_DONE:
-      // Command processing is done, reset the state
-      BV_StateManager.BV_CMD_Process_StateHandler = CMD_PROCESS_READY; // Set the command processing state to READY
-      BV_MDB_BusManager.RXBuffer_index = 0; // Reset the RX buffer index for the next command
-      break;
-    default:
-      // Error: Command processing state is not ready or in progress
-      // TODO Handle error appropriately
-      return;
-  }
-}
 
 /* USER CODE END 0 */
 
@@ -274,22 +123,53 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART1_UART_Init();
-  MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 2 */
 
-  // Initialize MDB Peripheral
-  MDB_Peripheral_Init();
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wmissing-noreturn"
-  HAL_UART_Receive_IT(&huart1, (uint8_t *) mdb_rx_buf, 1);
   /* USER CODE END 2 */
+
+  /* Init scheduler */
+  osKernelInitialize();
+
+  /* USER CODE BEGIN RTOS_MUTEX */
+  /* add mutexes, ... */
+  /* USER CODE END RTOS_MUTEX */
+
+  /* USER CODE BEGIN RTOS_SEMAPHORES */
+  /* add semaphores, ... */
+  /* USER CODE END RTOS_SEMAPHORES */
+
+  /* USER CODE BEGIN RTOS_TIMERS */
+  /* start timers, add new ones, ... */
+  /* USER CODE END RTOS_TIMERS */
+
+  /* USER CODE BEGIN RTOS_QUEUES */
+  /* add queues, ... */
+  /* USER CODE END RTOS_QUEUES */
+
+  /* Create the thread(s) */
+  /* creation of defaultTask */
+  defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+
+  /* USER CODE BEGIN RTOS_THREADS */
+  /* add threads, ... */
+  MDB_TaskCreate();                 /* create before scheduler        */
+  /* USER CODE END RTOS_THREADS */
+
+  /* USER CODE BEGIN RTOS_EVENTS */
+  /* add events, ... */
+  /* USER CODE END RTOS_EVENTS */
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  MDB_HandleCommand(BV_MDB_BusManager.MDB_RXbuffer, BV_MDB_BusManager.RXBuffer_index);
-
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -408,6 +288,48 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 
 /* USER CODE END 4 */
+
+/* USER CODE BEGIN Header_StartDefaultTask */
+/**
+  * @brief  Function implementing the defaultTask thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+/* USER CODE END Header_StartDefaultTask */
+void StartDefaultTask(void *argument)
+{
+  /* init code for USB_DEVICE */
+  MX_USB_DEVICE_Init();
+  /* USER CODE BEGIN 5 */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END 5 */
+}
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM4 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM4)
+  {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
+}
 
 /**
   * @brief  This function is executed in case of error occurrence.

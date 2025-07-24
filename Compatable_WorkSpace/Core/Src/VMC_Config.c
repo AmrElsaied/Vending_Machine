@@ -1,36 +1,39 @@
-/* bill_validator.c
- * Source file for bill validator functionality
- */
+/*******************************************************************************
+ * @file    VMC_Config.c
+ * @author  Amr Mohamed
+ * @brief   Source file for the VMC configuration module
+ *
+ * @details
+ * Implements configuration and initialization functions for the
+ * VMC (Vending Machine Controller) module.
+ *
+ * @version 1.0
+ * @date    2025-07-06
+ ******************************************************************************/
 
-/* ###################################################################################################################
-                                                        Includes
-################################################################################################################### */
-#include "bill_validator.h"
-#include <stdint.h>
-#include <stdbool.h>
+/******************************************************************************
+ *                                Includes                                    *
+ ******************************************************************************/
+#include "VMC_Config.h"
+/******************************************************************************
+ *                             Module Config                                  *
+ ******************************************************************************/
 
-/* ###################################################################################################################
-                                                    Data Declarations
-################################################################################################################### */
-MDB_BusManager BV_MDB_BusManager = {
-    .MDB_RXbuffer = {0},
-    .MDB_TXbuffer = {0},
-    .RXBuffer_index = 0,
-    .TXBuffer_index = 0,
-    .CurCycle_Processed = true, /* Initialize the flag to false */
-    .CurCycle_Missed = false, /* Initialize the flag to false */
-    .MDB_RX_CMD_Index = VMC_CMD_MAX_NUMBER, /* Initialize to a default value */
-    .MDB_TX_CMD_Index = VMC_CMD_MAX_NUMBER, /* Initialize to a default value */
-    .MDB_Process_CMD_Index = VMC_CMD_MAX_NUMBER /* Initialize to a default value */
-};
+/******************************************************************************
+ *                            Private Macros                                  *
+ ******************************************************************************/
 
-State_Manager BV_StateManager = {
-    .BV_StateHnadler = STATE_RESTART,               /* Initialize the state to RESTART */
-    .BV_CMD_RX_StateHandler = CMD_RX_READY,            /* Initialize the command reception state to READY */
-    .BV_CMD_TX_StateHandler = CMD_TX_READY,             /* Initialize the command transmission state to BUSY */
-    .BV_CMD_Process_StateHandler = CMD_PROCESS_READY    /* Initialize the command processing state to BUSY */
-};
+/******************************************************************************
+ *                         Private Data Types                                 *
+ ******************************************************************************/
 
+/******************************************************************************
+ *                          Private Variables                                 *
+ ******************************************************************************/
+
+/******************************************************************************
+ *                           Public Variables                                 *
+ ******************************************************************************/
 CMD_Type VMC_CMDs [VMC_CMD_MAX_NUMBER] = {
     /*  VMC_CMD_0x01E6 */
     {
@@ -123,37 +126,14 @@ CMD_Type VMC_CMDs [VMC_CMD_MAX_NUMBER] = {
         .CMD_Response = {0x0100}, .CMD_Response_Length = 1
     }
 };
-/* ###################################################################################################################
-                                                    Function Prototypes
-################################################################################################################### */
-static void bill_validator_init(void);
-static bool bill_validator_check(void);
-static void bill_validator_process(void);
+/******************************************************************************
+ *                         Private Prototypes                                 *
+ ******************************************************************************/
 
-/* ###################################################################################################################
-                                                    Function Definitions
-################################################################################################################### */
+/******************************************************************************
+ *                          Public Functions                                  *
+ ******************************************************************************/
 
-/**
- * @brief Initialize the bill validator hardware/module.
- */
-static void bill_validator_init(void) {
-     // Initialization code here
-}
-
-
-/**
- * @brief Process the bill input and update system state.
- */
-static void bill_validator_process(void) {
-     // Processing code here
-}
-
-/**
- * @brief Check the status of the bill validator.
- * @return true if bill is valid, false otherwise
- */
-static bool bill_validator_check(void) {
-     // Status checking code here
-     return false;
-}
+/******************************************************************************
+ *                          Private Functions                                 *
+ ******************************************************************************/
