@@ -88,6 +88,7 @@ typedef struct {
  *                     Global Variables (extern)                              *
  ******************************************************************************/
 extern UART_HandleTypeDef huart1;
+
 /******************************************************************************
  *                              Public API                                    *
  ******************************************************************************/
@@ -101,8 +102,10 @@ static inline uint16_t mdbRing_count(const mdb_ring_t *r)
 static inline uint16_t mdbRing_free(const mdb_ring_t *r)
 { return (MDB_RING_LEN - 1U) - mdbRing_count(r); }
 
-void MDB_TaskCreate(void);
 
+void MDB_HandleCommand(uint16_t *RxBuffer, uint8_t length);
+void MDB_SendResponseWithModeBit(uint16_t *data, uint8_t dataLength);
+void MDB_ReceiveCommand(uint16_t word);
 
 #endif /* MDB_HANDLER_H_ */
 
