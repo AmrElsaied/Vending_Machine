@@ -25,6 +25,7 @@
 /* USER CODE BEGIN Includes */
 #include "FreeRTOS.h"
 #include "MDB_Handler.h"
+#include "system_tasks.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -154,7 +155,7 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
-  MDB_TaskCreate();                 /* create before scheduler        */
+  System_TaskCreate();                 /* create before scheduler        */
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */

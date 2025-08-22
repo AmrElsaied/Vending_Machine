@@ -32,13 +32,19 @@
 /******************************************************************************
  *                          Type Definitions                                  *
  ******************************************************************************/
-typedef enum {
-    STATE_DISABLED,   /* Bill validator is disabled */
-    STATE_BUSY,       /* Bill validator is busy processing */
-    STATE_READY,      /* Bill validator is ready to accept bills */
-    STATE_RESTART,    /* Bill validator is restarting */
-    STATE_ERROR       /* Bill validator encountered an error */
-} BV_State;
+
+ typedef enum {
+    STATE_DISABLED,             /* Cashless device is disabled */
+    STATE_IDLE,                 /* Cashless device is idle */
+    STATE_ACTIVE,               /* Cashless device is active */
+    STATE_INIT,                 /* Cashless device is initializing */
+    STATE_RESTART,              /* Cashless device is restarting */
+    STATE_START_SESSION,          /* Cashless device Card is inserted */
+    STATE_CANCEL_SESSION,          /* Cashless device Card is removed */
+    STATE_VEND_REQ,             /* Cashless device Vend request */
+    STATE_VEND_PROCESS,        /* Cashless device Vend process */
+    STATE_ERROR                 /* Cashless device encountered an error */
+} Peripheral_State_t;
 
 typedef enum {
     CMD_TX_READY = 0,       /* Command is ready to be transmitted */
@@ -69,7 +75,7 @@ typedef struct {
 
 
 typedef struct{
-    BV_State BV_StateHnadler;                   /* State of the bill validator */
+    Peripheral_State_t Cashless_StateHandler;                   /* State of the Cashless device */
     CMD_RX_State CMD_RX_StateHandler;           /* State of the command reception */
     CMD_TX_State CMD_TX_StateHandler;           /* State of the command transmission */
     CMD_Process_State CMD_Process_StateHandler; /* State of the command processing */
@@ -84,10 +90,16 @@ typedef struct {
     uint8_t MDB_Process_CMD_Index;
 } MDB_BusManager_t;
 
+typedef void (*CmdHandlerFn)(uint16_t *RxBuffer, uint8_t cmd_length);
+
+typedef struct {
+    CmdHandlerFn handler;
+} CommandEntry_t;
 /******************************************************************************
  *                     Global Variables (extern)                              *
  ******************************************************************************/
 extern UART_HandleTypeDef huart1;
+
 /******************************************************************************
  *                              Public API                                    *
  ******************************************************************************/
@@ -101,8 +113,10 @@ static inline uint16_t mdbRing_count(const mdb_ring_t *r)
 static inline uint16_t mdbRing_free(const mdb_ring_t *r)
 { return (MDB_RING_LEN - 1U) - mdbRing_count(r); }
 
-void MDB_TaskCreate(void);
 
+void MDB_HandleCommand(uint16_t *RxBuffer, uint8_t length);
+void MDB_SendResponseWithModeBit(uint16_t *data, uint8_t dataLength);
+void MDB_ReceiveCommand(uint16_t word);
 
 #endif /* MDB_HANDLER_H_ */
 
