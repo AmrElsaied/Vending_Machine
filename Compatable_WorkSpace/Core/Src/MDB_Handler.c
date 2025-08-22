@@ -304,6 +304,7 @@ void MDB_HandleCommand(uint16_t *RxBuffer, uint8_t cmd_index)
             // Command reception is done, process the command
             
             // Reset the RX for a new command
+            MDB_BusManager.RXBuffer_index = 0;
             MDB_StateManager.CMD_RX_StateHandler = CMD_RX_READY;           // Set the state to READY for the next command
             MDB_StateManager.CMD_Process_StateHandler = CMD_PROCESS_READY; // Set the command processing state to DONE
         }
@@ -571,32 +572,30 @@ static void handle_cmd_0x0077(uint16_t *RxBuffer, uint8_t cmd_length) {
         switch (MDB_StateManager.Cashless_StateHandler) {
             case STATE_INIT:
                 // During initialization state
-                if (MDB_BusManager.RXBuffer_index > 1) {
-                    // Has subcommand
-                    switch (RxBuffer[1]) {
-                        case 0x01F9:
-                            // Standard response for disabled state
-                            VMC_CMDs[cmd_index].CMD_Response[0] = 0x0001;
-                            VMC_CMDs[cmd_index].CMD_Response[1] = 0x0002;
-                            VMC_CMDs[cmd_index].CMD_Response[2] = 0x0000;
-                            VMC_CMDs[cmd_index].CMD_Response[3] = 0x0000;
-                            VMC_CMDs[cmd_index].CMD_Response[4] = 0x0001;
-                            VMC_CMDs[cmd_index].CMD_Response[5] = 0x0000;
-                            VMC_CMDs[cmd_index].CMD_Response[6] = 0x0005;
-                            VMC_CMDs[cmd_index].CMD_Response[7] = 0x0003;
-                            VMC_CMDs[cmd_index].CMD_Response[8] = 0x010C;
-                            
-                            // Set the response length to 9
-                            VMC_CMDs[cmd_index].CMD_Response_Length = 9;
-                            break;
-                        case 0x00FF:
-                            // Standard ACK
-                            VMC_CMDs[cmd_index].CMD_Response[0] = 0x0100;
-                            VMC_CMDs[cmd_index].CMD_Response_Length = 1;
-                            break;
-                        default:
-                            return;
-                    }
+                // Has subcommand
+                switch (RxBuffer[1]) {
+                    case 0x01F9:
+                        // Standard response for disabled state
+                        VMC_CMDs[cmd_index].CMD_Response[0] = 0x0001;
+                        VMC_CMDs[cmd_index].CMD_Response[1] = 0x0002;
+                        VMC_CMDs[cmd_index].CMD_Response[2] = 0x0000;
+                        VMC_CMDs[cmd_index].CMD_Response[3] = 0x0000;
+                        VMC_CMDs[cmd_index].CMD_Response[4] = 0x0001;
+                        VMC_CMDs[cmd_index].CMD_Response[5] = 0x0000;
+                        VMC_CMDs[cmd_index].CMD_Response[6] = 0x0005;
+                        VMC_CMDs[cmd_index].CMD_Response[7] = 0x0003;
+                        VMC_CMDs[cmd_index].CMD_Response[8] = 0x010C;
+                        
+                        // Set the response length to 9
+                        VMC_CMDs[cmd_index].CMD_Response_Length = 9;
+                        break;
+                    case 0x00FF:
+                        // Standard ACK
+                        VMC_CMDs[cmd_index].CMD_Response[0] = 0x0100;
+                        VMC_CMDs[cmd_index].CMD_Response_Length = 1;
+                        break;
+                    default:
+                        return;
                 }
                 break;
             default:
