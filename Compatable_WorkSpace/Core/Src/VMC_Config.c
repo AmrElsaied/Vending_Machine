@@ -56,13 +56,13 @@ CMD_Type VMC_CMDs[VMC_CMD_MAX_NUMBER] = {
                 0x0047, 0x0020, 0x0043, 0x0041, 0x0049, 0x004D, 0x0041, 0x004E,
                 0x0020, 0x004C, 0x0001, 0x0005, 0x0120}, .CMD_Response_Length = 29},
         /*  VMC_CMD_0x0077 */
-    {   .CMD = {0x0077}, .CMD_Length = 1, 
+    {   .CMD = {0x0077, 0x0000}, .CMD_Length = 2,
         .CMD_Response = {0}, .CMD_Response_Length = 0},
         /*  VMC_CMD_0x0075 */
     {   .CMD = {0x0075,0x00FF, 0x007A}, .CMD_Length = 3, 
         .CMD_Response = {0x000F,0x0001, 0x0000, 0x0000}, .CMD_Response_Length = 4},
         /*  VMC_CMD_0x0076 */
-    {   .CMD = {0x0076}, .CMD_Length = 1, 
+    {   .CMD = {0x0076, 0x0000}, .CMD_Length = 2,
         .CMD_Response = {0}, .CMD_Response_Length = 0}
     };
 /******************************************************************************
