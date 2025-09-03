@@ -75,10 +75,21 @@ static void mdbCMDProcessTask(void *argument);
 static void mdbRxTask(void *argument)
 {
     uint16_t word;
+    TickType_t lastCallTick = xTaskGetTickCount();
     for (;;)
     {
         /* Wait until ISR “gives” a token (see ISR code). */
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+        TickType_t nowTick = xTaskGetTickCount();
+        if ((nowTick - lastCallTick) > MDB_BUS_TIMEOUT) // 10 ms interval exceeded
+        {
+            MDB_BusManager.RXBuffer_index = 0;
+            MDB_StateManager.CMD_RX_StateHandler = CMD_RX_READY;           // Set the state to READY for the next command
+            MDB_StateManager.CMD_Process_StateHandler = CMD_PROCESS_READY; // Set the command processing state to DONE
+        }
+        lastCallTick = nowTick;
+
         while (mdbRing_pop(&rxRing, &word))
         {
             MDB_ReceiveCommand(word);
