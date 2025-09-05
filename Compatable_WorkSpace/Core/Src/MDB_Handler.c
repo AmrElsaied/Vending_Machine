@@ -55,27 +55,27 @@ uint16_t mdb_rx_buf[1];
 
 MDB_StateManager_t MDB_StateManager = {
     .Cashless_StateHandler = STATE_RESTART,             /* Initialize the state to RESTART */
-    .CMD_RX_StateHandler = CMD_RX_READY,          /* Initialize the command reception state to READY */
-    .CMD_TX_StateHandler = CMD_TX_READY,          /* Initialize the command transmission state to BUSY */
-    .CMD_Process_StateHandler = CMD_PROCESS_READY /* Initialize the command processing state to BUSY */
+    .CMD_RX_StateHandler = CMD_RX_READY,                /* Initialize the command reception state to READY */
+    .CMD_TX_StateHandler = CMD_TX_READY,                /* Initialize the command transmission state to READY */
+    .CMD_Process_StateHandler = CMD_PROCESS_READY       /* Initialize the command processing state to READY */
 };
 
 MDB_BusManager_t MDB_BusManager = {
     .MDB_RXbuffer = {0},
     .RXBuffer_index = 0,
-    .MDB_RX_CMD_Index = VMC_CMD_MAX_NUMBER,     /* Initialize to a default value */
-    .MDB_TX_CMD_Index = VMC_CMD_MAX_NUMBER,     /* Initialize to a default value */
-    .MDB_Process_CMD_Index = VMC_CMD_MAX_NUMBER /* Initialize to a default value */
+    .MDB_RX_CMD_Index = VMC_CMD_MAX_NUMBER,             /* Initialize to a default value */
+    .MDB_TX_CMD_Index = VMC_CMD_MAX_NUMBER,             /* Initialize to a default value */
+    .MDB_Process_CMD_Index = VMC_CMD_MAX_NUMBER         /* Initialize to a default value */
 };
 
 const CommandEntry_t command_table[] = {
-    {handle_cmd_0x01E7},
-    {handle_cmd_0x013B},
-    {handle_cmd_0x01D5},
-    {handle_cmd_0x0074},
-    {handle_cmd_0x0077},
-    {handle_cmd_0x0075},
-    {handle_cmd_0x0076}
+    {handle_cmd_0x01E7},             /* Command 0x01E7 handler */
+    {handle_cmd_0x013B},             /* Command 0x013B handler */
+    {handle_cmd_0x01D5},             /* Command 0x01D5 handler */
+    {handle_cmd_0x0074},             /* Command 0x0074 handler */
+    {handle_cmd_0x0077},             /* Command 0x0077 handler */
+    {handle_cmd_0x0075},             /* Command 0x0075 handler */
+    {handle_cmd_0x0076}              /* Command 0x0076 handler */
 };
 
 bool Vending_EN = false;
@@ -83,13 +83,11 @@ bool Vending_EN = false;
 /******************************************************************************
  *                          Public Functions                                  *
  ******************************************************************************/
-/* ------------------------------------------------------------
- * HAL_UART_RxCpltCallback
- *
- * Called on every RXNE (UART receive complete).
- * Copies the 9-bit MDB word to the ring buffer,
- * notifies rxTask, and re-arms the interrupt.
- * ---------------------------------------------------------- */
+
+/**
+ * @brief UART receive complete callback for MDB communication
+ * @note This function is called by the HAL library when a byte is received
+ */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     if (huart == &huart1)
@@ -111,26 +109,21 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     }
 }
 
-/* ----------------------------------------------------------------------
- * mdbRing_init
- * ----------------------------------------------------------------------
- * Clear the read and write indices, effectively emptying the ring.
- * Caller: mdbTask() once at startup.
- * -------------------------------------------------------------------- */
+/**
+ * @brief Initialize the MDB ring buffer
+ * @note This function is not thread-safe and should only be called during
+ *       initialization when no other tasks are accessing the ring buffer.
+ */
 void mdbRing_init(mdb_ring_t *r)
 {
     r->wr = r->rd = 0U;
 }
 
-/* ----------------------------------------------------------------------
- * mdbRing_push
- * ----------------------------------------------------------------------
- * Put one 16‑bit word into the ring.
- * • Returns true  if the word was stored.
- * • Returns false if the ring is full (caller may drop byte or count error).
- *
- * Called ONLY from the USART RX ISR (single producer).
- * -------------------------------------------------------------------- */
+/**
+ * @brief Push a 16-bit word into the MDB ring buffer
+ * @note This function is not thread-safe and should only be called from the
+ *       USART RX ISR context.
+ */
 bool mdbRing_push(mdb_ring_t *r, uint16_t word)
 {
     /* Calculate the index that WRITER would have AFTER this push.
@@ -154,15 +147,10 @@ bool mdbRing_push(mdb_ring_t *r, uint16_t word)
     return true;
 }
 
-/* ----------------------------------------------------------------------
- * mdbRing_pop
- * ----------------------------------------------------------------------
- * Retrieve one 16‑bit word from the ring.
- * • Returns true  and sets *word when data available.
- * • Returns false when ring is empty.
- *
- * Called ONLY from mdbTask() (single consumer).
- * -------------------------------------------------------------------- */
+/**
+ * @brief Pop a 16-bit word from the MDB ring buffer
+ * @note Called ONLY from mdbTask() (single consumer).
+ */
 bool mdbRing_pop(mdb_ring_t *r, uint16_t *word)
 {
     if (r->rd == r->wr)
@@ -172,12 +160,21 @@ bool mdbRing_pop(mdb_ring_t *r, uint16_t *word)
     r->rd = (r->rd + 1U) & (MDB_RING_LEN - 1U);
     return true;
 }
+
+/**
+ * @brief Initialize the MDB bus communication system
+ * @note This function must be called before any MDB communication can occur.
+ */
 void MDB_BusInit(void)
 {
     mdbRing_init(&rxRing);
     HAL_UART_Receive_IT(&huart1, (uint8_t *)mdb_rx_buf, 1);
 }
 
+/**
+ * @brief Process received MDB command words and manage command reception state
+ * @note Called ONLY from mdbTask() (single consumer).
+ */
 void MDB_ReceiveCommand(uint16_t word)
 {
     uint8_t CMD_expectedLength =0;
@@ -288,6 +285,11 @@ void MDB_ReceiveCommand(uint16_t word)
     }
 }
 
+/**
+ * @brief Handle and process a complete MDB command
+ * @note This function should be called when a complete command has been received
+ *       and is ready for processing. It manages the command processing state machine.
+ */
 void MDB_HandleCommand(uint16_t *RxBuffer, uint8_t cmd_index)
 {
     switch (MDB_StateManager.CMD_Process_StateHandler)
@@ -328,6 +330,10 @@ void MDB_HandleCommand(uint16_t *RxBuffer, uint8_t cmd_index)
     }
 }
 
+/**
+ * @brief Send MDB response data with proper mode bit handling
+ * @note This function uses interrupt-driven transmission (HAL_UART_Transmit_IT).
+ */
 void MDB_SendResponseWithModeBit(uint16_t *data, uint8_t dataLength)
 {
     HAL_UART_Transmit_IT(&huart1, (uint8_t *)data, dataLength);
@@ -338,9 +344,22 @@ void MDB_SendResponseWithModeBit(uint16_t *data, uint8_t dataLength)
  ******************************************************************************/
 
 /**
- * @brief Handler for command 0x01E7
- * @param RxBuffer Buffer containing the received command
- * @param cmd_length Length of the command in RxBuffer
+ * @brief Handle MDB SETUP command (0x01E7)
+ * 
+ * @details Processes the MDB SETUP command (0x01E7) which is typically 
+ *          sent by the VMC during initialization. This function validates 
+ *          the command structure and sends an appropriate response based 
+ *          on the current cashless state. In the RESTART state, it will 
+ *          transition the system to the INIT state after responding.
+ *
+ * @param RxBuffer Pointer to buffer containing the received command data
+ * @param cmd_length Length of the received command in the buffer
+ *
+ * @note This function is called by the command dispatcher when command 0x01E7 is received.
+ *       It performs structure validation before processing by checking first and last bytes.
+ *
+ * @warning An invalid command structure will result in no response being sent.
+ *          The function uses the global MDB_StateManager to manage state transitions.
  */
 static void handle_cmd_0x01E7(uint16_t *RxBuffer, uint8_t cmd_length) {
     // Get the command index from the MDB_BusManager
@@ -375,9 +394,24 @@ static void handle_cmd_0x01E7(uint16_t *RxBuffer, uint8_t cmd_length) {
 }
 
 /**
- * @brief Handler for command 0x013B
- * @param RxBuffer Buffer containing the received command
- * @param cmd_length Length of the command in RxBuffer
+ * @brief Handle MDB POLL command (0x013B)
+ * 
+ * @details Processes the MDB POLL command (0x013B) which is sent periodically 
+ *          by the VMC to check the status of the cashless device. This function 
+ *          monitors the vending GPIO pin to detect card insertion/removal events,
+ *          manages session states, and provides appropriate responses based on 
+ *          the current system state. It handles multiple states including INIT, 
+ *          IDLE, START_SESSION, ACTIVE, VEND_REQ, VEND_PROCESS, and CANCEL_SESSION.
+ *
+ * @param RxBuffer Pointer to buffer containing the received command data
+ * @param cmd_length Length of the received command in the buffer
+ *
+ * @note This function is one of the most complex handlers as it manages the 
+ *       cashless state machine transitions based on both command data and 
+ *       hardware signals (GPIO pins).
+ *
+ * @warning Proper GPIO configuration is required for the VENDING_Pin to correctly 
+ *          detect card insertion/removal events.
  */
 static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
     // Get the command index from the MDB_BusManager
@@ -482,9 +516,24 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
 }
 
 /**
- * @brief Handler for command 0x01D5
- * @param RxBuffer Buffer containing the received command
- * @param cmd_length Length of the command in RxBuffer
+ * @brief Handle MDB READER CANCEL command (0x01D5)
+ * 
+ * @details Processes the MDB READER CANCEL command (0x01D5) which is used to 
+ *          terminate an ongoing cashless payment session. This function validates
+ *          the command structure and sends appropriate responses based on the current
+ *          state of the cashless device. The primary purpose of this command is to
+ *          handle user-initiated cancellations during the payment process.
+ *
+ * @param RxBuffer Pointer to buffer containing the received command data
+ * @param cmd_length Length of the received command in the buffer
+ *
+ * @note This function primarily handles the IDLE state with a standard ACK response,
+ *       but can also respond to other states with a default ACK. Its behavior is
+ *       simpler than other handlers as it mainly acknowledges the cancellation request.
+ *
+ * @warning Command validation checks both the first and last bytes of the command
+ *          to ensure proper command structure before processing. Invalid command
+ *          structure will result in no response being sent.
  */
 static void handle_cmd_0x01D5(uint16_t *RxBuffer, uint8_t cmd_length) {
     // Get the command index from the MDB_BusManager
@@ -519,15 +568,27 @@ static void handle_cmd_0x01D5(uint16_t *RxBuffer, uint8_t cmd_length) {
 }
 
 /**
- * @brief Handler for command 0x0074
- * @param RxBuffer Buffer containing the received command
- * @param cmd_length Length of the command in RxBuffer
+ * @brief Handle MDB initialization command (0x0074)
+ * 
+ * @details Processes the MDB command (0x0074) which is part of the setup/initialization
+ *          sequence sent by the VMC. This function validates the command structure
+ *          and responds appropriately based on the current system state. During the
+ *          initialization phase, it facilitates the transition to the IDLE state.
+ *
+ * @param RxBuffer Pointer to buffer containing the received command data
+ * @param cmd_length Length of the received command in the buffer
+ *
+ * @note This command is larger than most (33 bytes), but for efficiency only the
+ *       first and last bytes are checked for validation. During initialization,
+ *       this command causes a transition to the IDLE state.
+ *
+ * @warning The command validation is simplified to only check first and last bytes
+ *          rather than the entire command structure due to its length. This is a
+ *          performance optimization but could potentially miss malformed commands.
  */
 static void handle_cmd_0x0074(uint16_t *RxBuffer, uint8_t cmd_length) {
     // Get the command index from the MDB_BusManager
     uint8_t cmd_index = MDB_BusManager.MDB_RX_CMD_Index;
-    // For this command, we need to check all the data in the command
-    // Since this is a larger command with 33 bytes
     
     // We could compare the entire buffer, but for simplicity just check the first and last bytes
     if (RxBuffer[0] == VMC_CMDs[cmd_index].CMD[0] &&
@@ -557,14 +618,31 @@ static void handle_cmd_0x0074(uint16_t *RxBuffer, uint8_t cmd_length) {
 }
 
 /**
- * @brief Handler for command 0x0077
- * @param RxBuffer Buffer containing the received command
- * @param cmd_length Length of the command in RxBuffer
+ * @brief Handle MDB initialization command (0x0077)
+ * 
+ * @details Processes the MDB command (0x0077) which is part of the setup/initialization
+ *          sequence sent by the VMC. This function processes different subcommands 
+ *          (identified by RxBuffer[1]) and provides appropriate responses based on
+ *          the current state and subcommand received. It is primarily used during
+ *          the initialization phase to establish communication parameters.
+ *
+ * @param RxBuffer Pointer to buffer containing the received command data
+ * @param cmd_length Length of the received command in the buffer
+ *
+ * @note This function supports multiple subcommands:
+ *       - 0x01F9: Configuration information response
+ *       - 0x00FF: Standard ACK response
+ *       Each subcommand requires a different response structure, which is handled
+ *       within the nested switch statements in this function.
+ *
+ * @warning The function validates command structure by checking first and last bytes.
+ *          Invalid command structure or unrecognized subcommands will result in 
+ *          no response or error handling.
  */
 static void handle_cmd_0x0077(uint16_t *RxBuffer, uint8_t cmd_length) {
     // Get the command index from the MDB_BusManager
     uint8_t cmd_index = MDB_BusManager.MDB_RX_CMD_Index;
-    // This command might have a subcommand
+    // Verify the command structure is valid
     if (RxBuffer[0] == VMC_CMDs[cmd_index].CMD[0] &&
         RxBuffer[cmd_length-1] == VMC_CMDs[cmd_index].CMD[VMC_CMDs[cmd_index].CMD_Length-1]) {
         
@@ -595,6 +673,8 @@ static void handle_cmd_0x0077(uint16_t *RxBuffer, uint8_t cmd_length) {
                         VMC_CMDs[cmd_index].CMD_Response_Length = 1;
                         break;
                     default:
+                        // TODO Handle error
+                        VMC_CMDs[cmd_index].CMD_Response_Length = 0;
                         return;
                 }
                 break;
@@ -615,9 +695,25 @@ static void handle_cmd_0x0077(uint16_t *RxBuffer, uint8_t cmd_length) {
 }
 
 /**
- * @brief Handler for command 0x0075
- * @param RxBuffer Buffer containing the received command
- * @param cmd_length Length of the command in RxBuffer
+ * @brief Handle MDB Session Start command (0x0075)
+ * 
+ * @details Processes the MDB command (0x0075) which is part of the session start
+ *          process. This function validates the command structure and sends an
+ *          appropriate response based on the current cashless state, particularly
+ *          focusing on the ACTIVE state response where the session is established.
+ *
+ * @param RxBuffer Pointer to buffer containing the received command data
+ * @param cmd_length Length of the received command in the buffer
+ *
+ * @note This function is primarily designed to handle session establishment
+ *       in the ACTIVE state. When in this state, it sends a four-element response
+ *       with specific data values (0x000F, 0x0001, 0x003B, 0x014B) to acknowledge
+ *       the session start request.
+ *
+ * @warning Command validation checks both the first and last bytes of the command
+ *          to ensure proper command structure before processing. The function will
+ *          not respond to commands received in states other than ACTIVE unless 
+ *          error handling is implemented.
  */
 static void handle_cmd_0x0075(uint16_t *RxBuffer, uint8_t cmd_length) {
     // Get the command index from the MDB_BusManager
@@ -638,7 +734,6 @@ static void handle_cmd_0x0075(uint16_t *RxBuffer, uint8_t cmd_length) {
                 break;
                 
             default:
-                // Default response for unknown state
                 //TODO Handle the error
                 VMC_CMDs[cmd_index].CMD_Response_Length = 0;
                 break;
@@ -655,9 +750,29 @@ static void handle_cmd_0x0075(uint16_t *RxBuffer, uint8_t cmd_length) {
 }
 
 /**
- * @brief Handler for command 0x0076
- * @param RxBuffer Buffer containing the received command
- * @param cmd_length Length of the command in RxBuffer
+ * @brief Handle MDB Vending Request and Status command (0x0076)
+ * 
+ * @details Processes the MDB command (0x0076) which handles different aspects of
+ *          the vending process based on subcommands. This function processes vending
+ *          requests, successful vends, and failed vends according to the specific
+ *          subcommand received (identified by RxBuffer[1]). It manages appropriate 
+ *          state transitions based on both the current system state and the specific
+ *          subcommand. It supports three main states: ACTIVE, VEND_PROCESS,
+ *          and CANCEL_SESSION.
+ *
+ * @param RxBuffer Pointer to buffer containing the received command data
+ * @param cmd_length Length of the received command in the buffer
+ *
+ * @note This function supports multiple subcommands and state combinations:
+ *       - ACTIVE state + 0x01FF subcommand: Vending request - Transitions to VEND_REQ state
+ *       - VEND_PROCESS state + 0x017F subcommand: Successful vend - Transitions to ACTIVE state
+ *       - CANCEL_SESSION state + 0x00BF subcommand: Session termination - Transitions to IDLE state
+ *       Each combination results in different responses and state transitions based on
+ *       the vending operation status.
+ *
+ * @warning This is one of the most complex handler functions as it manages 
+ *          multiple state transitions and vending operation statuses via subcommands. 
+ *          Invalid subcommands or states will result in no response being sent.
  */
 static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
     // Get the command index from the MDB_BusManager
@@ -699,8 +814,6 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response_Length = 0;
                 break;
             }
-            // May terminate vend request
-            // MDB_StateManager.Cashless_StateHandler = STATE_INSERT_CARD;
             break;
 
         case STATE_CANCEL_SESSION:

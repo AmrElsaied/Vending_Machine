@@ -37,7 +37,6 @@
  ******************************************************************************/
 TaskHandle_t mdbRxTaskHandle = NULL;
 TaskHandle_t mdbCMDProcessTaskHandle = NULL;
-extern MDB_BusManager_t MDB_BusManager;
 /******************************************************************************
  *                      Private Function Prototypes                           *
  ******************************************************************************/
