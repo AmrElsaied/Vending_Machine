@@ -4,8 +4,7 @@
  * @brief   Source file for the VMC configuration module
  *
  * @details
- * Implements configuration and initialization functions for the
- * VMC (Vending Machine Controller) module.
+ * Implements configuration for the VMC (Vending Machine Controller) module.
  *
  * @version 1.0
  * @date    2025-07-06
