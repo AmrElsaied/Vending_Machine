@@ -26,8 +26,6 @@
 /******************************************************************************
  *                             Module Config                                  *
  ******************************************************************************/
-#define ESP_ENABLE_DEBUG_OUTPUT     1    /* Enable debug output via debug UART */
-
 /* UART Configuration */
 #define ESP_UART_INSTANCE           USART1    /* ESP8266 UART instance */
 #define ESP_DEBUG_UART_INSTANCE     USART2    /* Debug UART instance */
@@ -96,6 +94,7 @@ typedef struct {
     char mqtt_topic[ESP_TOPIC_MAX_LENGTH];   /* Default MQTT topic */
     UART_HandleTypeDef *esp_uart;    /* ESP8266 UART handle pointer */
     UART_HandleTypeDef *debug_uart;  /* Debug UART handle pointer */
+    bool debug_enabled;              /* Enable/disable debug output */
 } ESP_Config_t;
 
 /******************************************************************************

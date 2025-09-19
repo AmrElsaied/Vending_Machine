@@ -331,11 +331,9 @@ void MDB_SendResponseWithModeBit(uint16_t *data, uint8_t dataLength)
  */
 void MDB_DebugPrint(const char *message)
 {
-#if MDB_ENABLE_DEBUG_OUTPUT
     if (mdb_config.debug_enabled && mdb_config.debug_uart != NULL) {
         HAL_UART_Transmit(mdb_config.debug_uart, (uint8_t*)message, strlen(message), HAL_MAX_DELAY);
     }
-#endif
 }
 
 /******************************************************************************
@@ -878,9 +876,7 @@ void MDB_StartUARTReceive(void) {
     if (mdb_config.mdb_uart != NULL) {
         // Start UART receive with interrupt for single byte
         HAL_UART_Receive_IT(mdb_config.mdb_uart, (uint8_t *)mdb_rx_buf, 1);
-        if (mdb_config.debug_enabled) {
-            MDB_DebugPrint("MDB: UART Receive Started\r\n");
-        }
+        MDB_DebugPrint("MDB: UART Receive Started\r\n");
     }
 }
 

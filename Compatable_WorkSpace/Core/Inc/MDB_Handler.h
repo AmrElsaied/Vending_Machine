@@ -25,7 +25,6 @@
  ******************************************************************************/
 #define MDB_RING_LEN  256U           /* power‑of‑two for cheap wrap   */
 #define MDB_BUS_TIMEOUT 10           /* MDB bus timeout in ticks   */
-#define MDB_ENABLE_DEBUG_OUTPUT 1    /* Enable debug output via debug UART */
 /******************************************************************************
  *                          Macros & Constants                                *
  ******************************************************************************/

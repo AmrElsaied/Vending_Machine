@@ -46,7 +46,8 @@ ESP_Config_t esp_config = {
     .mqtt_client_id = ESP_DEFAULT_CLIENT_ID,
     .mqtt_topic = ESP_DEFAULT_MQTT_TOPIC,
     .esp_uart = NULL,          /* Will be set via ESP_SetConfig() */
-    .debug_uart = NULL         /* Will be set via ESP_SetConfig() */
+    .debug_uart = NULL,         /* Will be set via ESP_SetConfig() */
+    .debug_enabled = false              /* Enable debug output by default */
 };
 
 /******************************************************************************
@@ -623,11 +624,9 @@ static HAL_StatusTypeDef esp_wait_for_mqtt_connack(void)
  */
 static void esp_debug_print(const char *message)
 {
-#if ESP_ENABLE_DEBUG_OUTPUT
-    if (esp_config.debug_uart != NULL) {
+    if (esp_config.debug_enabled && esp_config.debug_uart != NULL) {
         HAL_UART_Transmit(esp_config.debug_uart, (uint8_t *)message, strlen(message), HAL_MAX_DELAY);
     }
-#endif
 }
 
 /**
@@ -645,8 +644,7 @@ static void esp_debug_print(const char *message)
  */
 static void esp_debug_print_bytes(const uint8_t *data, uint16_t length)
 {
-#if ESP_ENABLE_DEBUG_OUTPUT
-    if (esp_config.debug_uart != NULL) {
+    if (esp_config.debug_enabled&& esp_config.debug_uart != NULL) {
         for (uint16_t i = 0; i < length; i++) {
             char byte_msg[16];
             snprintf(byte_msg, sizeof(byte_msg), "0x%02X ", data[i]);
@@ -654,5 +652,4 @@ static void esp_debug_print_bytes(const uint8_t *data, uint16_t length)
         }
         HAL_UART_Transmit(esp_config.debug_uart, (uint8_t *)"\r\n", 2, HAL_MAX_DELAY);
     }
-#endif
 }
