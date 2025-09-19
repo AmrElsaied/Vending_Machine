@@ -107,7 +107,7 @@ static void mdbRxTask(void *argument)
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
         TickType_t nowTick = xTaskGetTickCount();
-        if ((nowTick - lastCallTick) > MDB_BUS_TIMEOUT) // 10 ms interval exceeded
+        if ((nowTick - lastCallTick) > mdb_config.bus_timeout) // 10 ms interval exceeded
         {
             MDB_BusManager.RXBuffer_index = 0;
             MDB_StateManager.CMD_RX_StateHandler = CMD_RX_READY;           

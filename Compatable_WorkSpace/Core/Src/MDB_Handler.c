@@ -18,6 +18,7 @@
 #include "main.h"
 #include "VMC_Config.h"
 #include "system_tasks.h"
+#include <string.h>
 /* FreeRTOS core */
 #include "FreeRTOS.h"
 #include "task.h"
@@ -83,32 +84,6 @@ bool Vending_EN = false;
 /******************************************************************************
  *                          Public Functions                                  *
  ******************************************************************************/
-
-/**
- * @brief UART receive complete callback for MDB communication
- * @note This function is called by the HAL library when a byte is received
- */
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
-{
-    if (huart == &huart1)
-    {
-        uint16_t word = mdb_rx_buf[0] & 0x1FF;
-
-        /* ---- 2. Store in ring buffer (overflow returns false) --------- */
-        (void)mdbRing_push(&rxRing, word); /* ignore overflow for now   */
-
-        /* ---- 3. Notify mdbTask that data is ready --------------------- */
-        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-        vTaskNotifyGiveFromISR(mdbRxTaskHandle, &xHigherPriorityTaskWoken);
-
-        /* ---- 4. Context‑switch immediately if mdbTask has higher prio  */
-        portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
-
-        /* ---- 5. Re‑arm reception of the NEXT byte --------------------- */
-        HAL_UART_Receive_IT(huart, (uint8_t *)mdb_rx_buf, 1);
-    }
-}
-
 /**
  * @brief Initialize the MDB ring buffer
  * @note This function is not thread-safe and should only be called during
@@ -167,8 +142,14 @@ bool mdbRing_pop(mdb_ring_t *r, uint16_t *word)
  */
 void MDB_BusInit(void)
 {
+    // Validate configuration
+    if (mdb_config.mdb_uart == NULL) {
+        MDB_DebugPrint("[MDB] Error: MDB UART handle not configured.\r\n");
+        return;
+    }
     mdbRing_init(&rxRing);
-    HAL_UART_Receive_IT(&huart1, (uint8_t *)mdb_rx_buf, 1);
+    MDB_StartUARTReceive();    
+    MDB_DebugPrint("[MDB] Bus initialized successfully.\r\n");
 }
 
 /**
@@ -336,7 +317,25 @@ void MDB_HandleCommand(uint16_t *RxBuffer, uint8_t cmd_index)
  */
 void MDB_SendResponseWithModeBit(uint16_t *data, uint8_t dataLength)
 {
-    HAL_UART_Transmit_IT(&huart1, (uint8_t *)data, dataLength);
+    if (mdb_config.mdb_uart != NULL) {
+        HAL_UART_Transmit_IT(mdb_config.mdb_uart, (uint8_t *)data, dataLength);
+    } else {
+        MDB_DebugPrint("[MDB] Error: MDB UART not configured for transmission.\r\n");
+    }
+}
+
+/**
+ * @brief Print debug message to debug UART
+ * @param message Null-terminated string to print
+ * @note Debug output can be controlled via mdb_config.debug_enabled
+ */
+void MDB_DebugPrint(const char *message)
+{
+#if MDB_ENABLE_DEBUG_OUTPUT
+    if (mdb_config.debug_enabled && mdb_config.debug_uart != NULL) {
+        HAL_UART_Transmit(mdb_config.debug_uart, (uint8_t*)message, strlen(message), HAL_MAX_DELAY);
+    }
+#endif
 }
 
 /******************************************************************************
@@ -850,5 +849,38 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
 
 /*************************** Private Functions *******************************/
 
+/**
+ * @brief UART receive complete callback for MDB communication
+ * @param huart UART handle that triggered the callback
+ * @note This function should be called from HAL_UART_RxCpltCallback
+ */
+void MDB_UART_RxCallback(UART_HandleTypeDef *huart) {
+    uint16_t word = mdb_rx_buf[0] & 0x1FF;
+    /* ---- 2. Store in ring buffer (overflow returns false) --------- */
+    (void)mdbRing_push(&rxRing, word); /* ignore overflow for now   */
 
+    /* ---- 3. Notify mdbTask that data is ready --------------------- */
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    vTaskNotifyGiveFromISR(mdbRxTaskHandle, &xHigherPriorityTaskWoken);
+
+    /* ---- 4. Context‑switch immediately if mdbTask has higher prio  */
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+
+    /* ---- 5. Re‑arm reception of the NEXT byte --------------------- */
+    HAL_UART_Receive_IT(mdb_config.mdb_uart, (uint8_t *)mdb_rx_buf, 1);
+}
+
+/**
+ * @brief Start UART receive interrupt for MDB communication
+ * @note Call this function after MDB configuration to start receiving data
+ */
+void MDB_StartUARTReceive(void) {
+    if (mdb_config.mdb_uart != NULL) {
+        // Start UART receive with interrupt for single byte
+        HAL_UART_Receive_IT(mdb_config.mdb_uart, (uint8_t *)mdb_rx_buf, 1);
+        if (mdb_config.debug_enabled) {
+            MDB_DebugPrint("MDB: UART Receive Started\r\n");
+        }
+    }
+}
 

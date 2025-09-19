@@ -26,6 +26,7 @@
 #include "FreeRTOS.h"
 #include "MDB_Handler.h"
 #include "system_tasks.h"
+#include "ESP8266_Handler.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -45,7 +46,8 @@
 
 /* Private variables ---------------------------------------------------------*/
 UART_HandleTypeDef huart1;
-
+UART_HandleTypeDef huart2;
+UART_HandleTypeDef huart3;
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
@@ -89,7 +91,20 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
 }
 
 
-
+/**
+ * @brief UART receive complete callback for MDB communication
+ * @note This function is called by the HAL library when a byte is received
+ */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (mdb_config.mdb_uart != NULL && huart->Instance == mdb_config.mdb_uart->Instance)
+    {
+        MDB_UART_RxCallback(huart);
+    }
+    if (esp_config.esp_uart != NULL && huart->Instance == esp_config.esp_uart->Instance) {
+        ESP_UART_RxCallback(huart);
+    }
+}
 
 
 /* USER CODE END 0 */
@@ -118,14 +133,15 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-
+  
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
-
+  ESP_Init();         /* Initialize ESP8266 module */
+  MDB_BusInit();      /* Initialize MDB bus */
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wmissing-noreturn"
   /* USER CODE END 2 */

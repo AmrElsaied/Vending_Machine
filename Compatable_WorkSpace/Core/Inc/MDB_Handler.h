@@ -25,6 +25,7 @@
  ******************************************************************************/
 #define MDB_RING_LEN  256U           /* power‑of‑two for cheap wrap   */
 #define MDB_BUS_TIMEOUT 10           /* MDB bus timeout in ticks   */
+#define MDB_ENABLE_DEBUG_OUTPUT 1    /* Enable debug output via debug UART */
 /******************************************************************************
  *                          Macros & Constants                                *
  ******************************************************************************/
@@ -95,10 +96,21 @@ typedef void (*CmdHandlerFn)(uint16_t *RxBuffer, uint8_t cmd_length);
 typedef struct {
     CmdHandlerFn handler;
 } CommandEntry_t;
+
+/**
+ * @brief MDB module configuration structure
+ */
+typedef struct {
+    UART_HandleTypeDef *mdb_uart;       /* MDB bus UART handle pointer */
+    UART_HandleTypeDef *debug_uart;        /* Debug output UART handle pointer */
+    uint32_t bus_timeout;                  /* MDB bus timeout in milliseconds */
+    bool debug_enabled;                    /* Enable/disable debug output */
+} MDB_Config_t;
 /******************************************************************************
  *                     Global Variables (extern)                              *
  ******************************************************************************/
-extern UART_HandleTypeDef huart1;               /* UART handle for communication */
+/* Note: UART handles are now configured via mdb_config variable */
+extern MDB_Config_t mdb_config;                 /* MDB configuration structure */
 extern MDB_StateManager_t MDB_StateManager;     /* State manager for MDB protocol */
 extern MDB_BusManager_t MDB_BusManager;         /* Bus manager for MDB protocol */
 /******************************************************************************
@@ -212,7 +224,7 @@ bool     mdbRing_push(mdb_ring_t *r, uint16_t word);
  *     MDB_ReceiveCommand(received_word);
  * }
  */
-bool     mdbRing_pop (mdb_ring_t *r, uint16_t *word);
+bool mdbRing_pop (mdb_ring_t *r, uint16_t *word);
 
 
 /**
@@ -291,14 +303,34 @@ void MDB_ReceiveCommand(uint16_t word);
  *          and should be called once during system initialization.
  * 
  * @note This function must be called before any MDB communication can occur.
- *       It assumes that the UART peripheral (huart1) has already been configured.
- * @warning Ensure that the MDB UART (huart1) is properly configured before calling this function.
+ *       It assumes that the MDB UART (mdb_config.mdb_uart) has already been configured.
+ * @warning Ensure that the MDB UART is properly configured before calling this function.
  * 
  * @example
  * // Initialize MDB bus during system startup
  * MDB_BusInit();
  */
 void MDB_BusInit(void);
+
+/**
+ * @brief Print debug message to debug UART
+ * @param message Null-terminated string to print
+ * @note Debug output can be controlled via mdb_config.debug_enabled
+ */
+void MDB_DebugPrint(const char *message);
+
+/**
+ * @brief UART receive complete callback for MDB communication
+ * @param huart UART handle that triggered the callback
+ * @note This function should be called from HAL_UART_RxCpltCallback
+ */
+void MDB_UART_RxCallback(UART_HandleTypeDef *huart);
+
+/**
+ * @brief Start UART receive interrupt for MDB communication
+ * @note Call this function after MDB configuration to start receiving data
+ */
+void MDB_StartUARTReceive(void);
 
 #endif /* MDB_HANDLER_H_ */
 
