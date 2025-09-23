@@ -272,14 +272,15 @@ void ESP_Subscribe(void)
  */
 void ESP_ParseMQTTMessage(void)
 {
+    // Look for +IPD indicating incoming data
     char *ipd_start = strstr((char *)esp_uart_rx_buffer, "+IPD,");
     if (!ipd_start)
         return;
-
+    // Extract the length of the incoming data
     int ipd_len = 0;
     if (sscanf(ipd_start, "+IPD,%d:", &ipd_len) != 1 || ipd_len <= 0)
         return;
-
+    // Move pointer to start of MQTT packet
     char *mqtt_packet = strchr(ipd_start, ':');
     if (!mqtt_packet)
         return;
@@ -287,7 +288,7 @@ void ESP_ParseMQTTMessage(void)
     mqtt_packet++; // Skip the ':'
     uint8_t *ptr = (uint8_t *)mqtt_packet;
 
-    // Ensure the full packet is received
+    // Ensure we have the full packet in the buffer
     size_t packet_start_idx = mqtt_packet - (char *)esp_uart_rx_buffer;
     if (esp_uart_rx_index < packet_start_idx + ipd_len)
         return; // Wait for more data
@@ -572,6 +573,7 @@ static HAL_StatusTypeDef esp_wait_for_mqtt_connack(void)
     uint16_t ipd_start = 0;
     tickstart = HAL_GetTick();
 
+    esp_debug_print("[ESP] CONNACK Response:\r\n");
     while ((HAL_GetTick() - tickstart) < ESP_MQTT_CONNECT_TIMEOUT && index < sizeof(response) - 1) {
         if (HAL_UART_Receive(esp_config.esp_uart, &response[index], 1, 1000) == HAL_OK) {
             if (!ipd_found && index >= 6 && memcmp(&response[index - 6], "+IPD,4:", 7) == 0) {
@@ -587,8 +589,6 @@ static HAL_StatusTypeDef esp_wait_for_mqtt_connack(void)
             index++;
         }
     }
-
-    esp_debug_print("[ESP] CONNACK Response:\r\n");
     esp_debug_print_bytes(response, index);
 
     // Validate CONNACK content (currently commented out for debugging)
