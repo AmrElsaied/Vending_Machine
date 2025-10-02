@@ -100,9 +100,6 @@ void ESP_Init(void)
     // Set the configuration with the default configuration
     ESP_SetConfig(&ESP8266_DefaultConfig);
 
-    // Start UART receive interrupt for ESP8266
-    ESP_StartUARTReceive();
-
     // Validate configuration
     if (esp_config.esp_uart == NULL) {
         esp_current_status = ESP_STATUS_ERROR;
@@ -118,29 +115,36 @@ void ESP_Init(void)
     // Basic ESP8266 setup
     if (ESP_SendAT("AT", "OK", ESP_AT_COMMAND_TIMEOUT) != HAL_OK) {
         esp_current_status = ESP_STATUS_ERROR;
+        esp_debug_print("[ESP] AT command failed\r\n");
         return;
     }
     
     // Setup WiFi connection
     if (esp_setup_wifi_connection() != HAL_OK) {
         esp_current_status = ESP_STATUS_ERROR;
+        esp_debug_print("[ESP] WiFi connection failed\r\n");
         return;
     }
     
     // Setup TCP connection to MQTT broker
     if (esp_setup_tcp_connection() != HAL_OK) {
         esp_current_status = ESP_STATUS_ERROR;
+        esp_debug_print("[ESP] TCP connection to MQTT broker failed\r\n");
         return;
     }
     
     // Setup MQTT connection
     if (esp_setup_mqtt_connection() != HAL_OK) {
         esp_current_status = ESP_STATUS_ERROR;
+        esp_debug_print("[ESP] MQTT connection failed\r\n");
         return;
     }
-    
+
     esp_current_status = ESP_STATUS_MQTT_CONNECTED;
     esp_debug_print("[ESP] MQTT Connected Successfully!\r\n");
+
+    // Start UART receive interrupt for ESP8266
+    ESP_StartUARTReceive();
 }
 
 /**
@@ -187,9 +191,9 @@ HAL_StatusTypeDef ESP_SendAT(const char *cmd, const char *expect, uint32_t timeo
     
     char atCommand[128];
     memset(esp_response_buffer, 0, sizeof(esp_response_buffer));
-
+    // Prepare AT command with CRLF
     snprintf(atCommand, sizeof(atCommand), "%s\r\n", cmd);
-
+    // Send AT command
     if (HAL_UART_Transmit(esp_config.esp_uart, (uint8_t *)atCommand, strlen(atCommand), HAL_MAX_DELAY) != HAL_OK) {
         esp_debug_print("[ESP] Transmit failed\r\n");
         return HAL_ERROR;
@@ -197,6 +201,7 @@ HAL_StatusTypeDef ESP_SendAT(const char *cmd, const char *expect, uint32_t timeo
 
     uint16_t index = 0;
     uint32_t tickstart = HAL_GetTick();
+    // Read response until timeout or expected string found
     while ((HAL_GetTick() - tickstart) < timeout && index < sizeof(esp_response_buffer) - 1) {
         if (HAL_UART_Receive(esp_config.esp_uart, (uint8_t *)&esp_response_buffer[index], 1, 50) == HAL_OK) {
             index++;
@@ -207,7 +212,9 @@ HAL_StatusTypeDef ESP_SendAT(const char *cmd, const char *expect, uint32_t timeo
     }
 
     char debug_msg[512];
-    snprintf(debug_msg, sizeof(debug_msg), "[ESP] CMD: %s\r\n[ESP] Raw Rsp: %s\r\n", cmd, esp_response_buffer);
+    snprintf(debug_msg, sizeof(debug_msg),
+            "[ESP] CMD: %s\r\n[ESP] Raw Rsp: %s\r\n",
+            cmd, esp_response_buffer);
     esp_debug_print(debug_msg);
 
     return (expect == NULL || strstr(esp_response_buffer, expect) != NULL) ? HAL_OK : HAL_ERROR;
@@ -272,14 +279,15 @@ void ESP_Subscribe(void)
  */
 void ESP_ParseMQTTMessage(void)
 {
+    // Look for +IPD indicating incoming data
     char *ipd_start = strstr((char *)esp_uart_rx_buffer, "+IPD,");
     if (!ipd_start)
         return;
-
+    // Extract the length of the incoming data
     int ipd_len = 0;
     if (sscanf(ipd_start, "+IPD,%d:", &ipd_len) != 1 || ipd_len <= 0)
         return;
-
+    // Move pointer to start of MQTT packet
     char *mqtt_packet = strchr(ipd_start, ':');
     if (!mqtt_packet)
         return;
@@ -287,7 +295,7 @@ void ESP_ParseMQTTMessage(void)
     mqtt_packet++; // Skip the ':'
     uint8_t *ptr = (uint8_t *)mqtt_packet;
 
-    // Ensure the full packet is received
+    // Ensure we have the full packet in the buffer
     size_t packet_start_idx = mqtt_packet - (char *)esp_uart_rx_buffer;
     if (esp_uart_rx_index < packet_start_idx + ipd_len)
         return; // Wait for more data
@@ -333,7 +341,8 @@ void ESP_ParseMQTTMessage(void)
     // Clear buffer up to the end of the parsed packet
     size_t total_packet_len = packet_start_idx + ipd_len;
     if (total_packet_len < esp_uart_rx_index) {
-        memmove((void *)esp_uart_rx_buffer, (void *)&esp_uart_rx_buffer[total_packet_len], 
+        memmove((void *)esp_uart_rx_buffer,
+                 (void *)&esp_uart_rx_buffer[total_packet_len], 
                 esp_uart_rx_index - total_packet_len);
         esp_uart_rx_index -= total_packet_len;
     } else {
@@ -373,6 +382,7 @@ void ESP_StartUARTReceive(void)
     if (esp_config.esp_uart != NULL) {
         esp_uart_rx_index = 0;
         HAL_UART_Receive_IT(esp_config.esp_uart, (uint8_t *)&esp_uart_rx_buffer[esp_uart_rx_index], 1);
+        esp_debug_print("[ESP] UART receive interrupt started\r\n");
     }
 }
 
@@ -397,7 +407,7 @@ static void esp_drain_rx_buffer(void)
     }
     
     uint8_t temp;
-    while (HAL_UART_Receive(esp_config.esp_uart, &temp, 1, 10) == HAL_OK);
+    while (HAL_UART_Receive(esp_config.esp_uart, &temp, 1, 200) == HAL_OK);
     
     // Clear internal buffer
     esp_uart_rx_index = 0;
@@ -421,6 +431,7 @@ static HAL_StatusTypeDef esp_setup_wifi_connection(void)
     char wifi_connect_cmd[128];
     
     if (ESP_SendAT("AT+CWMODE=1", "OK", 2000) != HAL_OK) {
+        esp_debug_print("[ESP] Failed to set WiFi mode\r\n");
         return HAL_ERROR;
     }
     
@@ -428,6 +439,7 @@ static HAL_StatusTypeDef esp_setup_wifi_connection(void)
              "AT+CWJAP=\"%s\",\"%s\"", esp_config.wifi_ssid, esp_config.wifi_password);
     
     if (ESP_SendAT(wifi_connect_cmd, "WIFI GOT IP", ESP_WIFI_CONNECT_TIMEOUT) != HAL_OK) {
+        esp_debug_print("[ESP] Failed to connect to WiFi\r\n");
         return HAL_ERROR;
     }
     
@@ -452,6 +464,7 @@ static HAL_StatusTypeDef esp_setup_tcp_connection(void)
     char tcp_connect_cmd[64];
     
     if (ESP_SendAT("AT+CIPMUX=0", "OK", 2000) != HAL_OK) {
+        esp_debug_print("[ESP] Failed to set single connection mode\r\n");
         return HAL_ERROR;
     }
     
@@ -460,6 +473,7 @@ static HAL_StatusTypeDef esp_setup_tcp_connection(void)
              esp_config.mqtt_broker_ip, esp_config.mqtt_broker_port);
     
     if (ESP_SendAT(tcp_connect_cmd, "CONNECT", ESP_TCP_CONNECT_TIMEOUT) != HAL_OK) {
+        esp_debug_print("[ESP] Failed to establish TCP connection\r\n");
         return HAL_ERROR;
     }
     
@@ -481,10 +495,12 @@ static HAL_StatusTypeDef esp_setup_tcp_connection(void)
 static HAL_StatusTypeDef esp_setup_mqtt_connection(void)
 {
     if (esp_send_mqtt_connect_packet() != HAL_OK) {
+        esp_debug_print("[ESP] Failed to send MQTT CONNECT packet\r\n");
         return HAL_ERROR;
     }
     
     if (esp_wait_for_mqtt_connack() != HAL_OK) {
+        esp_debug_print("[ESP] Failed to receive MQTT CONNACK response\r\n");
         return HAL_ERROR;
     }
     
@@ -519,6 +535,7 @@ static HAL_StatusTypeDef esp_send_mqtt_connect_packet(void)
     char cipsendCmd[32];
     sprintf(cipsendCmd, "AT+CIPSEND=%d", sizeof(mqttConnect));
     if (ESP_SendAT(cipsendCmd, ">", 5000) != HAL_OK) {
+        esp_debug_print("[ESP] Failed to send CIPSEND command\r\n");
         return HAL_ERROR;
     }
 
@@ -526,6 +543,7 @@ static HAL_StatusTypeDef esp_send_mqtt_connect_packet(void)
     esp_debug_print_bytes(mqttConnect, sizeof(mqttConnect));
 
     if (HAL_UART_Transmit(esp_config.esp_uart, (uint8_t *)mqttConnect, sizeof(mqttConnect), HAL_MAX_DELAY) != HAL_OK) {
+        esp_debug_print("[ESP] Failed to transmit MQTT CONNECT packet\r\n");
         return HAL_ERROR;
     }
 
@@ -572,6 +590,7 @@ static HAL_StatusTypeDef esp_wait_for_mqtt_connack(void)
     uint16_t ipd_start = 0;
     tickstart = HAL_GetTick();
 
+    esp_debug_print("[ESP] CONNACK Response:\r\n");
     while ((HAL_GetTick() - tickstart) < ESP_MQTT_CONNECT_TIMEOUT && index < sizeof(response) - 1) {
         if (HAL_UART_Receive(esp_config.esp_uart, &response[index], 1, 1000) == HAL_OK) {
             if (!ipd_found && index >= 6 && memcmp(&response[index - 6], "+IPD,4:", 7) == 0) {
@@ -587,8 +606,7 @@ static HAL_StatusTypeDef esp_wait_for_mqtt_connack(void)
             index++;
         }
     }
-
-    esp_debug_print("[ESP] CONNACK Response:\r\n");
+    esp_debug_print("[ESP] CONNACK Response bytes:\r\n");
     esp_debug_print_bytes(response, index);
 
     // Validate CONNACK content (currently commented out for debugging)
