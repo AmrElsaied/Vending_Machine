@@ -48,6 +48,14 @@ static void handle_cmd_0x0074(uint16_t *RxBuffer, uint8_t cmd_length);
 static void handle_cmd_0x0077(uint16_t *RxBuffer, uint8_t cmd_length);
 static void handle_cmd_0x0075(uint16_t *RxBuffer, uint8_t cmd_length);
 static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length);
+
+/* MDB_ReceiveCommand helper functions */
+static bool MDB_ProcessAck(uint16_t word);
+static uint8_t MDB_DetectCommand(uint16_t word);
+static bool MDB_IsCommandComplete(uint8_t cmd_index, uint16_t buffer_index, uint16_t last_word);
+static void MDB_InitCommandReception(uint8_t cmd_index, uint16_t first_word);
+static void MDB_CompleteCommandReception(uint8_t cmd_index);
+
 /******************************************************************************
  *                           Public Variables                                 *
  ******************************************************************************/
@@ -156,137 +164,46 @@ void MDB_BusInit(void)
 
 /**
  * @brief Process received MDB command words and manage command reception state
- * @note Called ONLY from mdbTask() (single consumer).
+ * @param word Received 16-bit word from MDB bus
+ * @note This function is now modular and easier to test and maintain
  */
 void MDB_ReceiveCommand(uint16_t word)
 {
-    uint8_t CMD_expectedLength =0;
-    switch (MDB_StateManager.CMD_RX_StateHandler)
-    {
-    case CMD_RX_READY:
-        if(MDB_BusManager.ACK_Waiting)
-        {
-            if(word == 0x0000) // Check for ACK
-            {
-                if(MDB_StateManager.Cashless_State_Change_Request)
-                {
-                    MDB_StateManager.Cashless_StateHandler = MDB_StateManager.Cashless_Req_State;
-                    MDB_StateManager.Cashless_State_Change_Request = false; // Clear state change request flag
-                }
-                MDB_BusManager.ACK_Waiting = false; // Clear ACK waiting flag 
-            }
-            else
-            {
-                MDB_BusManager.ACK_Waiting = false; // Clear ACK waiting flag
-                MDB_StateManager.Cashless_State_Change_Request = false; // Clear state change request flag
-                // Unexpected word while waiting for ACK
-                // TODO Handle error appropriately
-            }
-        }
-        else
-        {
-            /* Check if the received word matches any known command header */
-            for (uint8_t i = 0; i < VMC_CMD_MAX_NUMBER; ++i)
-            {
-                if (word == VMC_CMDs[i].CMD[0])
-                {
-                    MDB_StateManager.CMD_RX_StateHandler = CMD_RX_INPROGRESS;
-                    MDB_BusManager.MDB_RX_CMD_Index = i;
-                    MDB_BusManager.MDB_RXbuffer[0] = word;
-                    MDB_BusManager.RXBuffer_index = 1;
-                    break;
-                }
-            }
-        }
-        break;
-    case CMD_RX_INPROGRESS:
-    {
-        MDB_BusManager
-            .MDB_RXbuffer[MDB_BusManager.RXBuffer_index++] = word;
-            CMD_expectedLength =
-            VMC_CMDs[MDB_BusManager.MDB_RX_CMD_Index].CMD_Length;
-        /* Check the command based on the first byte in the buffer */
-        switch (MDB_BusManager.MDB_RX_CMD_Index) {
-            case VMC_CMD_0x01E7:
-                /* Handle specific command receiving if needed */
-                if (MDB_BusManager.RXBuffer_index >= CMD_expectedLength)
-                {
-                    MDB_StateManager.CMD_RX_StateHandler = CMD_RX_DONE;
-                }
-                break;
-            case VMC_CMD_0x013B:
-                /* Handle specific command receiving if needed */
-                if (MDB_BusManager.RXBuffer_index >= CMD_expectedLength)
-                {
-                    MDB_StateManager.CMD_RX_StateHandler = CMD_RX_DONE;
-                }
-                break;
-            case VMC_CMD_0x01D5:
-                /* Handle specific command receiving if needed */
-                if (MDB_BusManager.RXBuffer_index >= CMD_expectedLength)
-                {
-                    MDB_StateManager.CMD_RX_StateHandler = CMD_RX_DONE;
-                }
-                break;
-            case VMC_CMD_0x0074:
-                /* Handle specific command receiving if needed */
-                if (0x0000 == word)
-                {
-                    MDB_StateManager.CMD_RX_StateHandler = CMD_RX_DONE;
-                }
-                break;
-            case VMC_CMD_0x0077:
-                /* Handle specific command receiving if needed */
-                if (0x0000 == word)
-                {
-                    MDB_StateManager.CMD_RX_StateHandler = CMD_RX_DONE;
-                }
-                break;
-            case VMC_CMD_0x0075:
-                /* Handle specific command receiving if needed */
-                if (MDB_BusManager.RXBuffer_index >= CMD_expectedLength)
-                {
-                    MDB_StateManager.CMD_RX_StateHandler = CMD_RX_DONE;
-                }
-                break;
-            case VMC_CMD_0x0076:
-                /* Handle specific command receiving if needed */
-                switch (MDB_BusManager.MDB_RXbuffer[1])
-                {
-                case 0x00BF:
-                    if (0x000F == word)
-                    {
-                        MDB_StateManager.CMD_RX_StateHandler = CMD_RX_DONE;
-                    }
-                    break;
-                default:
-                    if (0x0000 == word)
-                    {
-                        MDB_StateManager.CMD_RX_StateHandler = CMD_RX_DONE;
-                    }
-                    break;
-                }
-                break;
-            default:
-                /* Handle receiving unrecognized command */
-                break;
-        }
-        
-        if (CMD_RX_DONE == MDB_StateManager.CMD_RX_StateHandler)
-        {
-            // MDB_BusManager.RXBuffer_index = 0;
-            /* ---- Notify mdbTask that data is ready --------------------- */
-            xTaskNotify(mdbCMDProcessTaskHandle,
-                        (uint32_t)MDB_BusManager.MDB_RX_CMD_Index,
-                        eSetValueWithOverwrite);
-            /* ---- Context‑switch immediately if mdbTask has higher prio  */
-            taskYIELD();
-        }
-        break;
+    /* Handle ACK processing first */
+    if (MDB_ProcessAck(word)) {
+        return; /* ACK was processed, nothing more to do */
     }
-    default:
-
-        break;
+    
+    switch (MDB_StateManager.CMD_RX_StateHandler) {
+        case CMD_RX_READY:
+            {
+                uint8_t cmd_index = MDB_DetectCommand(word);
+                if (cmd_index != VMC_CMD_MAX_NUMBER) {
+                    MDB_InitCommandReception(cmd_index, word);
+                }
+            }
+            break;
+            
+        case CMD_RX_INPROGRESS:
+            {
+                uint8_t cmd_index = MDB_BusManager.MDB_RX_CMD_Index;
+                
+                /* Store the received word */
+                MDB_BusManager.MDB_RXbuffer[MDB_BusManager.RXBuffer_index++] = word;
+                
+                /* Check if command is complete */
+                if (MDB_IsCommandComplete(cmd_index, MDB_BusManager.RXBuffer_index, word)) {
+                    MDB_CompleteCommandReception(cmd_index);
+                }
+            }
+            break;
+            
+        default:
+            /* Handle error state */
+            // MDB_StateManager.CMD_RX_StateHandler = CMD_RX_READY;
+            // MDB_BusManager.RXBuffer_index = 0;
+            // TODO Handle error appropriately
+            break;
     }
 }
 
@@ -365,6 +282,115 @@ void MDB_DebugPrint(const char *message)
  ******************************************************************************/
 
 /**
+ * @brief Process ACK responses
+ * @param word Received word
+ * @return true if ACK was processed, false otherwise
+ */
+static bool MDB_ProcessAck(uint16_t word) {
+    if (!MDB_BusManager.ACK_Waiting) {
+        return false;
+    }
+    
+    if (word == 0x0000) { // ACK received
+        if (MDB_StateManager.Cashless_State_Change_Request) {
+            MDB_StateManager.Cashless_StateHandler = MDB_StateManager.Cashless_Req_State;
+            MDB_StateManager.Cashless_State_Change_Request = false;
+        }
+        MDB_BusManager.ACK_Waiting = false;
+        return true;
+    } else {
+        // Unexpected word while waiting for ACK
+        MDB_BusManager.ACK_Waiting = false;
+        MDB_StateManager.Cashless_State_Change_Request = false;
+        // TODO: Handle error appropriately
+        return true; // ACK sequence handled (even if error)
+    }
+}
+
+/**
+ * @brief Detect command start
+ * @param word Received word
+ * @return Command index if found, VMC_CMD_MAX_NUMBER if not found
+ */
+static uint8_t MDB_DetectCommand(uint16_t word) {
+    for (uint8_t i = 0; i < VMC_CMD_MAX_NUMBER; ++i) {
+        if (word == VMC_CMDs[i].CMD[0]) {
+            return i;
+        }
+    }
+    return VMC_CMD_MAX_NUMBER; // Not found
+}
+
+/**
+ * @brief Check if command reception is complete
+ * @param cmd_index Command index
+ * @param buffer_index Current buffer index
+ * @param last_word Last received word
+ * @return true if command is complete
+ */
+static bool MDB_IsCommandComplete(uint8_t cmd_index, uint16_t buffer_index, uint16_t last_word) {    
+    switch (cmd_index) {
+        case VMC_CMD_0x01E7:
+        case VMC_CMD_0x013B:
+        case VMC_CMD_0x01D5:
+        case VMC_CMD_0x0075:
+            return buffer_index >= VMC_CMDs[cmd_index].CMD_Length;
+            
+        case VMC_CMD_0x0074:
+        case VMC_CMD_0x0077:
+            return last_word == 0x0000;
+            
+        case VMC_CMD_0x0076:
+            if (MDB_BusManager.MDB_RXbuffer[1] == 0x00BF) {
+                return last_word == 0x000F;
+            } else {
+                return last_word == 0x0000;
+            }
+            
+        default:
+            return false;
+    }
+}
+
+/**
+ * @brief Initialize command reception
+ * @param cmd_index Command index
+ * @param first_word First word of command
+ */
+static void MDB_InitCommandReception(uint8_t cmd_index, uint16_t first_word) {
+    MDB_StateManager.CMD_RX_StateHandler = CMD_RX_INPROGRESS;
+    MDB_BusManager.MDB_RX_CMD_Index = cmd_index;
+    MDB_BusManager.MDB_RXbuffer[0] = first_word;
+    MDB_BusManager.RXBuffer_index = 1;
+}
+
+/**
+ * @brief Complete command reception and notify processing task
+ * @param cmd_index Command index
+ */
+static void MDB_CompleteCommandReception(uint8_t cmd_index) {
+    MDB_StateManager.CMD_RX_StateHandler = CMD_RX_DONE;
+    
+    /* Notify mdbTask that data is ready */
+    xTaskNotify(mdbCMDProcessTaskHandle,
+                (uint32_t)cmd_index,
+                eSetValueWithOverwrite);
+    
+    /* Context-switch immediately if mdbTask has higher priority */
+    taskYIELD();
+}
+/**
+ * @brief Validate command structure by checking first and last bytes
+ * @param RxBuffer Pointer to buffer containing the received command data
+ * @param cmd_length Length of the received command in the buffer
+ * @param cmd_index Index of the command in VMC_CMDs array
+ * @return true if command structure is valid, false otherwise
+ */
+static bool MDB_ValidateCommandStructure(uint16_t *RxBuffer, uint8_t cmd_length, uint8_t cmd_index) {
+    return (RxBuffer[0] == VMC_CMDs[cmd_index].CMD[0] &&
+            RxBuffer[cmd_length-1] == VMC_CMDs[cmd_index].CMD[VMC_CMDs[cmd_index].CMD_Length-1]);
+}
+/**
  * @brief Handle MDB RESET command (0x01E7)
  * 
  * @details Processes the MDB RESET command (0x01E7) which is used to request
@@ -388,9 +414,7 @@ static void handle_cmd_0x01E7(uint16_t *RxBuffer, uint8_t cmd_length) {
     // Get the command index from the MDB_BusManager
     uint8_t cmd_index = MDB_BusManager.MDB_RX_CMD_Index;
     // Verify the command structure is valid
-    if (RxBuffer[0] == VMC_CMDs[cmd_index].CMD[0] &&
-        RxBuffer[cmd_length-1] == VMC_CMDs[cmd_index].CMD[VMC_CMDs[cmd_index].CMD_Length-1]) {
-        
+    if (MDB_ValidateCommandStructure(RxBuffer, cmd_length, cmd_index)) {
         // Process command based on current Cashless state
         switch (MDB_StateManager.Cashless_StateHandler) {
             case STATE_INACTIVE:
@@ -409,11 +433,9 @@ static void handle_cmd_0x01E7(uint16_t *RxBuffer, uint8_t cmd_length) {
         }
         if (VMC_CMDs[cmd_index].CMD_Response_Length > 0) { 
         // Send the response
-#if ENABLE_BV_TX == 1
         MDB_SendResponseWithModeBit(VMC_CMDs[cmd_index].CMD_Response,
                                     VMC_CMDs[cmd_index].CMD_Response_Length);
         }
-#endif
     }
 }
 
@@ -456,8 +478,7 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
         Vending_EN = false;
     }
     // Verify the command structure is valid
-    if (RxBuffer[0] == VMC_CMDs[cmd_index].CMD[0] &&
-        RxBuffer[cmd_length-1] == VMC_CMDs[cmd_index].CMD[VMC_CMDs[cmd_index].CMD_Length-1]) {
+    if (MDB_ValidateCommandStructure(RxBuffer, cmd_length, cmd_index)) {
         
         // Process command based on current Cashless state
         switch (MDB_StateManager.Cashless_StateHandler) {
@@ -552,10 +573,8 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
         
         // Send the response if there is one
         if (VMC_CMDs[cmd_index].CMD_Response_Length > 0) {
-#if ENABLE_BV_TX == 1
             MDB_SendResponseWithModeBit(VMC_CMDs[cmd_index].CMD_Response,
                                         VMC_CMDs[cmd_index].CMD_Response_Length);
-#endif
         }
     }
 }
@@ -584,8 +603,7 @@ static void handle_cmd_0x01D5(uint16_t *RxBuffer, uint8_t cmd_length) {
     // Get the command index from the MDB_BusManager
     uint8_t cmd_index = MDB_BusManager.MDB_RX_CMD_Index;
     // Verify the command structure is valid
-    if (RxBuffer[0] == VMC_CMDs[cmd_index].CMD[0] &&
-        RxBuffer[cmd_length-1] == VMC_CMDs[cmd_index].CMD[VMC_CMDs[cmd_index].CMD_Length-1]) {
+    if (MDB_ValidateCommandStructure(RxBuffer, cmd_length, cmd_index)) {
         
         // Process command based on current Cashless state
         switch (MDB_StateManager.Cashless_StateHandler) {
@@ -605,10 +623,8 @@ static void handle_cmd_0x01D5(uint16_t *RxBuffer, uint8_t cmd_length) {
         }
         if (VMC_CMDs[cmd_index].CMD_Response_Length > 0) {
             // Send the response
-#if ENABLE_BV_TX == 1
         MDB_SendResponseWithModeBit(VMC_CMDs[cmd_index].CMD_Response,
                                     VMC_CMDs[cmd_index].CMD_Response_Length);
-#endif
         }
     }
 }
@@ -640,8 +656,7 @@ static void handle_cmd_0x0074(uint16_t *RxBuffer, uint8_t cmd_length) {
     uint8_t cmd_index = MDB_BusManager.MDB_RX_CMD_Index;
     
     // We could compare the entire buffer, but for simplicity just check the first and last bytes
-    if (RxBuffer[0] == VMC_CMDs[cmd_index].CMD[0] &&
-        RxBuffer[cmd_length-1] == VMC_CMDs[cmd_index].CMD[VMC_CMDs[cmd_index].CMD_Length-1]) {
+    if (MDB_ValidateCommandStructure(RxBuffer, cmd_length, cmd_index)) {
         
         // Process command based on current Cashless state
         switch (MDB_StateManager.Cashless_StateHandler) {
@@ -660,10 +675,8 @@ static void handle_cmd_0x0074(uint16_t *RxBuffer, uint8_t cmd_length) {
         }
         if (VMC_CMDs[cmd_index].CMD_Response_Length > 0) {
             // Send the response which contains information about the device
-#if ENABLE_BV_TX == 1
         MDB_SendResponseWithModeBit(VMC_CMDs[cmd_index].CMD_Response,
                                     VMC_CMDs[cmd_index].CMD_Response_Length);
-#endif
         }
     }
 }
@@ -695,8 +708,7 @@ static void handle_cmd_0x0077(uint16_t *RxBuffer, uint8_t cmd_length) {
     // Get the command index from the MDB_BusManager
     uint8_t cmd_index = MDB_BusManager.MDB_RX_CMD_Index;
     // Verify the command structure is valid
-    if (RxBuffer[0] == VMC_CMDs[cmd_index].CMD[0] &&
-        RxBuffer[cmd_length-1] == VMC_CMDs[cmd_index].CMD[VMC_CMDs[cmd_index].CMD_Length-1]) {   
+    if (MDB_ValidateCommandStructure(RxBuffer, cmd_length, cmd_index)){   
         // Process command based on current Cashless state
         switch (MDB_StateManager.Cashless_StateHandler) {
             case STATE_RESET:
@@ -747,10 +759,8 @@ static void handle_cmd_0x0077(uint16_t *RxBuffer, uint8_t cmd_length) {
         
         // Send the response if we have one
         if (VMC_CMDs[cmd_index].CMD_Response_Length > 0) {
-#if ENABLE_BV_TX == 1
             MDB_SendResponseWithModeBit(VMC_CMDs[cmd_index].CMD_Response,
                                         VMC_CMDs[cmd_index].CMD_Response_Length);
-#endif
         }
     }
 }
@@ -782,8 +792,7 @@ static void handle_cmd_0x0075(uint16_t *RxBuffer, uint8_t cmd_length) {
     // Get the command index from the MDB_BusManager
     uint8_t cmd_index = MDB_BusManager.MDB_RX_CMD_Index;
     // Verify the command structure is valid
-    if (RxBuffer[0] == VMC_CMDs[cmd_index].CMD[0] && 
-        RxBuffer[cmd_length-1] == VMC_CMDs[cmd_index].CMD[VMC_CMDs[cmd_index].CMD_Length-1]) {
+    if (MDB_ValidateCommandStructure(RxBuffer, cmd_length, cmd_index)) {
         
         // Process command based on current Cashless state
         switch (MDB_StateManager.Cashless_StateHandler) {
@@ -804,10 +813,8 @@ static void handle_cmd_0x0075(uint16_t *RxBuffer, uint8_t cmd_length) {
         
         // Send the response if we have one
         if (VMC_CMDs[cmd_index].CMD_Response_Length > 0) {
-#if ENABLE_BV_TX == 1
             MDB_SendResponseWithModeBit(VMC_CMDs[cmd_index].CMD_Response,
                                         VMC_CMDs[cmd_index].CMD_Response_Length);
-#endif
         }
     }
 }
