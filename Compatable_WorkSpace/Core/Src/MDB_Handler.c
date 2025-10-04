@@ -55,10 +55,11 @@ mdb_ring_t rxRing; /* our ring instance */
 uint16_t mdb_rx_buf[1];
 
 MDB_StateManager_t MDB_StateManager = {
-    .Cashless_StateHandler = STATE_RESTART,             /* Initialize the state to RESTART */
+    .Cashless_StateHandler = STATE_INACTIVE,             /* Initialize the state to INACTIVE */
     .CMD_RX_StateHandler = CMD_RX_READY,                /* Initialize the command reception state to READY */
     .CMD_TX_StateHandler = CMD_TX_READY,                /* Initialize the command transmission state to READY */
-    .CMD_Process_StateHandler = CMD_PROCESS_READY       /* Initialize the command processing state to READY */
+    .CMD_Process_StateHandler = CMD_PROCESS_READY,       /* Initialize the command processing state to READY */
+    .Cashless_State_Change_Request = false              /* Initialize state change request flag to false */
 };
 
 MDB_BusManager_t MDB_BusManager = {
@@ -66,7 +67,8 @@ MDB_BusManager_t MDB_BusManager = {
     .RXBuffer_index = 0,
     .MDB_RX_CMD_Index = VMC_CMD_MAX_NUMBER,             /* Initialize to a default value */
     .MDB_TX_CMD_Index = VMC_CMD_MAX_NUMBER,             /* Initialize to a default value */
-    .MDB_Process_CMD_Index = VMC_CMD_MAX_NUMBER         /* Initialize to a default value */
+    .MDB_Process_CMD_Index = VMC_CMD_MAX_NUMBER,        /* Initialize to a default value */
+    .ACK_Waiting = false                                /* Initialize ACK waiting flag */
 };
 
 const CommandEntry_t command_table[] = {
@@ -162,19 +164,41 @@ void MDB_ReceiveCommand(uint16_t word)
     switch (MDB_StateManager.CMD_RX_StateHandler)
     {
     case CMD_RX_READY:
-        for (uint8_t i = 0; i < VMC_CMD_MAX_NUMBER; ++i)
+        if(MDB_BusManager.ACK_Waiting)
         {
-            if (word == VMC_CMDs[i].CMD[0])
+            if(word == 0x0000) // Check for ACK
             {
-                MDB_StateManager.CMD_RX_StateHandler = CMD_RX_INPROGRESS;
-                MDB_BusManager.MDB_RX_CMD_Index = i;
-                MDB_BusManager.MDB_RXbuffer[0] = word;
-                MDB_BusManager.RXBuffer_index = 1;
-                break;
+                if(MDB_StateManager.Cashless_State_Change_Request)
+                {
+                    MDB_StateManager.Cashless_StateHandler = MDB_StateManager.Cashless_Req_State;
+                    MDB_StateManager.Cashless_State_Change_Request = false; // Clear state change request flag
+                }
+                MDB_BusManager.ACK_Waiting = false; // Clear ACK waiting flag 
+            }
+            else
+            {
+                MDB_BusManager.ACK_Waiting = false; // Clear ACK waiting flag
+                MDB_StateManager.Cashless_State_Change_Request = false; // Clear state change request flag
+                // Unexpected word while waiting for ACK
+                // TODO Handle error appropriately
+            }
+        }
+        else
+        {
+            /* Check if the received word matches any known command header */
+            for (uint8_t i = 0; i < VMC_CMD_MAX_NUMBER; ++i)
+            {
+                if (word == VMC_CMDs[i].CMD[0])
+                {
+                    MDB_StateManager.CMD_RX_StateHandler = CMD_RX_INPROGRESS;
+                    MDB_BusManager.MDB_RX_CMD_Index = i;
+                    MDB_BusManager.MDB_RXbuffer[0] = word;
+                    MDB_BusManager.RXBuffer_index = 1;
+                    break;
+                }
             }
         }
         break;
-
     case CMD_RX_INPROGRESS:
     {
         MDB_BusManager
@@ -206,7 +230,7 @@ void MDB_ReceiveCommand(uint16_t word)
                 break;
             case VMC_CMD_0x0074:
                 /* Handle specific command receiving if needed */
-                if (MDB_BusManager.RXBuffer_index >= CMD_expectedLength)
+                if (0x0000 == word)
                 {
                     MDB_StateManager.CMD_RX_StateHandler = CMD_RX_DONE;
                 }
@@ -341,18 +365,20 @@ void MDB_DebugPrint(const char *message)
  ******************************************************************************/
 
 /**
- * @brief Handle MDB SETUP command (0x01E7)
+ * @brief Handle MDB RESET command (0x01E7)
  * 
- * @details Processes the MDB SETUP command (0x01E7) which is typically 
- *          sent by the VMC during initialization. This function validates 
- *          the command structure and sends an appropriate response based 
- *          on the current cashless state. In the RESTART state, it will 
- *          transition the system to the INIT state after responding.
+ * @details Processes the MDB RESET command (0x01E7) which is used to request
+ *          the cashless device to reset and initialize. This command is sent by
+ *          the VMC to force the cashless device into a known state, typically
+ *          during system startup or error recovery. The function validates the
+ *          command structure and responds with device status while transitioning
+ *          from INACTIVE to RESET state to begin the initialization sequence.
  *
  * @param RxBuffer Pointer to buffer containing the received command data
  * @param cmd_length Length of the received command in the buffer
  *
- * @note This function is called by the command dispatcher when command 0x01E7 is received.
+ * @note This is typically the first command sent by the VMC to establish
+ *       communication with the cashless device and request a system reset.
  *       It performs structure validation before processing by checking first and last bytes.
  *
  * @warning An invalid command structure will result in no response being sent.
@@ -367,17 +393,18 @@ static void handle_cmd_0x01E7(uint16_t *RxBuffer, uint8_t cmd_length) {
         
         // Process command based on current Cashless state
         switch (MDB_StateManager.Cashless_StateHandler) {
-            case STATE_RESTART:
-                // Handle command during RESTART state
-                // Default response for restart state
+            case STATE_INACTIVE:
+                // Handle command during INACTIVE state
+                // Default response for inactive state
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0100;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 1;
-                MDB_StateManager.Cashless_StateHandler = STATE_INIT; // Transition to INIT state
+                MDB_StateManager.Cashless_StateHandler = STATE_RESET; // Transition to RESET state
                 break;
             default:
                 // Unknown state, use default response
-                //TODO Handle the error
-                VMC_CMDs[cmd_index].CMD_Response_Length = 0;
+                VMC_CMDs[cmd_index].CMD_Response[0] = 0x0100;
+                VMC_CMDs[cmd_index].CMD_Response_Length = 1;
+                MDB_StateManager.Cashless_StateHandler = STATE_RESET; // Transition to RESET state
                 break;
         }
         if (VMC_CMDs[cmd_index].CMD_Response_Length > 0) { 
@@ -413,7 +440,7 @@ static void handle_cmd_0x01E7(uint16_t *RxBuffer, uint8_t cmd_length) {
 static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
     // Get the command index from the MDB_BusManager
     uint8_t cmd_index = MDB_BusManager.MDB_RX_CMD_Index;
-    // Verify the command structure is valid
+    
     if (HAL_GPIO_ReadPin(VENDING_GPIO_Port, VENDING_Pin) == GPIO_PIN_RESET && Vending_EN == false)
     {
         MDB_StateManager.Cashless_StateHandler = STATE_START_SESSION;
@@ -428,11 +455,20 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
         MDB_StateManager.Cashless_StateHandler = STATE_CANCEL_SESSION;
         Vending_EN = false;
     }
+    // Verify the command structure is valid
     if (RxBuffer[0] == VMC_CMDs[cmd_index].CMD[0] &&
         RxBuffer[cmd_length-1] == VMC_CMDs[cmd_index].CMD[VMC_CMDs[cmd_index].CMD_Length-1]) {
         
         // Process command based on current Cashless state
         switch (MDB_StateManager.Cashless_StateHandler) {
+            case STATE_RESET:
+                // Handle command during RESET state
+                // Default response for reset state
+                VMC_CMDs[cmd_index].CMD_Response[0] = 0x0000;
+                VMC_CMDs[cmd_index].CMD_Response[1] = 0x0100;
+                VMC_CMDs[cmd_index].CMD_Response_Length = 2;
+                MDB_StateManager.Cashless_StateHandler = STATE_INIT; // Transition to INIT state
+                break;
             case STATE_INIT:
                 // Handle command during INIT state
                 // No response needed for this command in init state
@@ -440,13 +476,18 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response_Length = 1;
                 break;
 
-            case STATE_IDLE:
-                // Handle command during IDLE state
-                // No response in idle state
+            case STATE_DISABLED:
+                // Handle command during DISABLED state
+                // No response needed for this command in disabled state
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0100;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 1;
                 break;
-
+                case STATE_ENABLED:
+                // Handle command during ENABLED state
+                // No response needed for this command in enabled state
+                VMC_CMDs[cmd_index].CMD_Response[0] = 0x0100;
+                VMC_CMDs[cmd_index].CMD_Response_Length = 1;
+                break;
             case STATE_START_SESSION:
                 // Handle command during INSERT_CARD state
                 // Special handling for card inserted state with new data
@@ -464,11 +505,14 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response[10] = 0x01BD;
                 // Set the response length to exactly 11
                 VMC_CMDs[cmd_index].CMD_Response_Length = 11;
-                MDB_StateManager.Cashless_StateHandler = STATE_ACTIVE; // Transition to ACTIVE state
+                MDB_BusManager.ACK_Waiting = true; // Set ACK waiting flag
+                MDB_StateManager.Cashless_State_Change_Request = true; // Request state change
+                MDB_StateManager.Cashless_Req_State = STATE_SESSION_IDLE; // Request transition to SESSION_IDLE
                 break;
-                
-            case STATE_ACTIVE:
-                // Handle command during ACTIVE state
+
+                case STATE_SESSION_IDLE:
+                // Handle command during SESSION_IDLE state
+                // No response in session idle state
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0100;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 1;
                 break;
@@ -480,7 +524,9 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response[2] = 0x000F;
                 VMC_CMDs[cmd_index].CMD_Response[3] = 0x0114;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 4;
-                MDB_StateManager.Cashless_StateHandler = STATE_VEND_PROCESS; // Transition to vend process state
+                MDB_BusManager.ACK_Waiting = true; // Set ACK waiting flag
+                MDB_StateManager.Cashless_State_Change_Request = true; // Request state change
+                MDB_StateManager.Cashless_Req_State = STATE_VEND_PROCESS; // Request transition
                 break;
                 
             case STATE_VEND_PROCESS:
@@ -494,6 +540,8 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0004;
                 VMC_CMDs[cmd_index].CMD_Response[1] = 0x0104;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 2;
+                MDB_BusManager.ACK_Waiting = true; // Set ACK waiting flag
+                MDB_StateManager.Cashless_State_Change_Request = false; // No state change request
             break;
 
             default:
@@ -513,20 +561,20 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
 }
 
 /**
- * @brief Handle MDB READER CANCEL command (0x01D5)
+ * @brief Handle MDB READER ENABLE command (0x01D5)
  * 
- * @details Processes the MDB READER CANCEL command (0x01D5) which is used to 
- *          terminate an ongoing cashless payment session. This function validates
- *          the command structure and sends appropriate responses based on the current
- *          state of the cashless device. The primary purpose of this command is to
- *          handle user-initiated cancellations during the payment process.
+ * @details Processes the MDB READER ENABLE command (0x01D5) which is used to 
+ *          change the cashless device to be in enabled state. This function validates
+ *          the command structure and transitions the cashless device from DISABLED
+ *          to ENABLED state, allowing it to participate in payment transactions.
+ *          The command sends an ACK response to confirm the state transition.
  *
  * @param RxBuffer Pointer to buffer containing the received command data
  * @param cmd_length Length of the received command in the buffer
  *
- * @note This function primarily handles the IDLE state with a standard ACK response,
- *       but can also respond to other states with a default ACK. Its behavior is
- *       simpler than other handlers as it mainly acknowledges the cancellation request.
+ * @note This function handles the state transition from DISABLED to ENABLED state
+ *       with a standard ACK response. It enables the cashless device to accept
+ *       payment transactions and participate in the vending process.
  *
  * @warning Command validation checks both the first and last bytes of the command
  *          to ensure proper command structure before processing. Invalid command
@@ -541,17 +589,18 @@ static void handle_cmd_0x01D5(uint16_t *RxBuffer, uint8_t cmd_length) {
         
         // Process command based on current Cashless state
         switch (MDB_StateManager.Cashless_StateHandler) {
-            case STATE_IDLE:
-                // Handle command during IDLE state
-                // Standard response in idle state
+            case STATE_DISABLED:
+                // Handle command during DISABLED state
+                // Standard response in disabled state
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0100;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 1;
+                MDB_StateManager.Cashless_StateHandler = STATE_ENABLED; // Transition to ENABLED state
                 break;
             default:
                 // Unknown state, use default response
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0100;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 1;
-                // VMC_CMDs[cmd_index].CMD_Response_Length = 0;
+                MDB_StateManager.Cashless_StateHandler = STATE_ENABLED; // Transition to ENABLED state
                 break;
         }
         if (VMC_CMDs[cmd_index].CMD_Response_Length > 0) {
@@ -565,19 +614,22 @@ static void handle_cmd_0x01D5(uint16_t *RxBuffer, uint8_t cmd_length) {
 }
 
 /**
- * @brief Handle MDB initialization command (0x0074)
+ * @brief Handle MDB Product Identification Exchange command (0x0074)
  * 
- * @details Processes the MDB command (0x0074) which is part of the setup/initialization
- *          sequence sent by the VMC. This function validates the command structure
- *          and responds appropriately based on the current system state. During the
- *          initialization phase, it facilitates the transition to the IDLE state.
+ * @details Processes the MDB command (0x0074) which is used to exchange product
+ *          identification and serial number information between the VMC and cashless
+ *          device. This command allows the VMC to inform the cashless device about
+ *          its product identification and serial number while simultaneously requesting
+ *          the same identification data from the cashless device. This bidirectional
+ *          exchange is essential for system identification and audit trail purposes.
  *
  * @param RxBuffer Pointer to buffer containing the received command data
  * @param cmd_length Length of the received command in the buffer
  *
- * @note This command is larger than most (33 bytes), but for efficiency only the
- *       first and last bytes are checked for validation. During initialization,
- *       this command causes a transition to the IDLE state.
+ * @note This command is larger than most (33 bytes) as it contains VMC product
+ *       identification and serial number data. For efficiency, only the first and
+ *       last bytes are checked for validation. The cashless device responds with
+ *       its own identification data and transitions to DISABLED state.
  *
  * @warning The command validation is simplified to only check first and last bytes
  *          rather than the entire command structure due to its length. This is a
@@ -596,7 +648,9 @@ static void handle_cmd_0x0074(uint16_t *RxBuffer, uint8_t cmd_length) {
             case STATE_INIT:
                 // During initialization state, provide initialization information
                 // The response is already defined in VMC_CMDs
-                MDB_StateManager.Cashless_StateHandler = STATE_IDLE;
+                MDB_BusManager.ACK_Waiting = true; // Set ACK waiting flag
+                MDB_StateManager.Cashless_State_Change_Request = true; // Set state change request flag
+                MDB_StateManager.Cashless_Req_State = STATE_DISABLED; // Request transition to Disabled state
                 break;
             default:
                 // Default device info response
@@ -615,22 +669,23 @@ static void handle_cmd_0x0074(uint16_t *RxBuffer, uint8_t cmd_length) {
 }
 
 /**
- * @brief Handle MDB initialization command (0x0077)
+ * @brief Handle MDB VMC Data Request and Device Configuration command (0x0077)
  * 
- * @details Processes the MDB command (0x0077) which is part of the setup/initialization
- *          sequence sent by the VMC. This function processes different subcommands 
- *          (identified by RxBuffer[1]) and provides appropriate responses based on
- *          the current state and subcommand received. It is primarily used during
- *          the initialization phase to establish communication parameters.
+ * @details Processes the MDB command (0x0077) which is used to request information
+ *          about VMC data and ask for cashless device configuration data. This command
+ *          allows the VMC to inform the cashless device about some VMC parameters while
+ *          simultaneously requesting configuration information from the cashless device.
+ *          The function processes different subcommands (identified by RxBuffer[1]) and
+ *          provides appropriate responses based on the current state and subcommand received.
  *
  * @param RxBuffer Pointer to buffer containing the received command data
  * @param cmd_length Length of the received command in the buffer
  *
  * @note This function supports multiple subcommands:
- *       - 0x01F9: Configuration information response
- *       - 0x00FF: Standard ACK response
- *       Each subcommand requires a different response structure, which is handled
- *       within the nested switch statements in this function.
+ *       - 0x01F9: Cashless device configuration information response
+ *       - 0x00FF: Standard ACK response for VMC data for Min/Max pricing
+ *       Each subcommand facilitates bidirectional information exchange between
+ *       VMC and cashless device during the setup phase.
  *
  * @warning The function validates command structure by checking first and last bytes.
  *          Invalid command structure or unrecognized subcommands will result in 
@@ -641,10 +696,10 @@ static void handle_cmd_0x0077(uint16_t *RxBuffer, uint8_t cmd_length) {
     uint8_t cmd_index = MDB_BusManager.MDB_RX_CMD_Index;
     // Verify the command structure is valid
     if (RxBuffer[0] == VMC_CMDs[cmd_index].CMD[0] &&
-        RxBuffer[cmd_length-1] == VMC_CMDs[cmd_index].CMD[VMC_CMDs[cmd_index].CMD_Length-1]) {
-        
+        RxBuffer[cmd_length-1] == VMC_CMDs[cmd_index].CMD[VMC_CMDs[cmd_index].CMD_Length-1]) {   
         // Process command based on current Cashless state
         switch (MDB_StateManager.Cashless_StateHandler) {
+            case STATE_RESET:
             case STATE_INIT:
                 // During initialization state
                 // Has subcommand
@@ -652,17 +707,26 @@ static void handle_cmd_0x0077(uint16_t *RxBuffer, uint8_t cmd_length) {
                     case 0x01F9:
                         // Standard response for disabled state
                         VMC_CMDs[cmd_index].CMD_Response[0] = 0x0001;
-                        VMC_CMDs[cmd_index].CMD_Response[1] = 0x0002;
-                        VMC_CMDs[cmd_index].CMD_Response[2] = 0x0000;
-                        VMC_CMDs[cmd_index].CMD_Response[3] = 0x0000;
+                        /* Feature lvl */
+                        VMC_CMDs[cmd_index].CMD_Response[1] = 0x0001;
+                        /* Country code byte_1 */
+                        VMC_CMDs[cmd_index].CMD_Response[2] = 0x00FF;
+                        /* Country code byte_2 */
+                        VMC_CMDs[cmd_index].CMD_Response[3] = 0x00FF;
+                        /* Scale factor */
                         VMC_CMDs[cmd_index].CMD_Response[4] = 0x0001;
+                        /* Decimal places */
                         VMC_CMDs[cmd_index].CMD_Response[5] = 0x0000;
-                        VMC_CMDs[cmd_index].CMD_Response[6] = 0x0005;
+                        /* Application maximum response time */
+                        VMC_CMDs[cmd_index].CMD_Response[6] = 0x0091;
+                        /* Miscellaneous options */
                         VMC_CMDs[cmd_index].CMD_Response[7] = 0x0003;
-                        VMC_CMDs[cmd_index].CMD_Response[8] = 0x010C;
-                        
+                        VMC_CMDs[cmd_index].CMD_Response[8] = 0x0195;
                         // Set the response length to 9
                         VMC_CMDs[cmd_index].CMD_Response_Length = 9;
+                        MDB_StateManager.Cashless_StateHandler = STATE_INIT; // Transition to INIT state in case it was RESET
+                        MDB_BusManager.ACK_Waiting = true; // Set ACK waiting flag
+                        MDB_StateManager.Cashless_State_Change_Request = false; // Clear state change request flag
                         break;
                     case 0x00FF:
                         // Standard ACK
@@ -692,24 +756,26 @@ static void handle_cmd_0x0077(uint16_t *RxBuffer, uint8_t cmd_length) {
 }
 
 /**
- * @brief Handle MDB Session Start command (0x0075)
+ * @brief Handle MDB REVALUE LIMIT REQUEST command (0x0075)
  * 
- * @details Processes the MDB command (0x0075) which is part of the session start
- *          process. This function validates the command structure and sends an
- *          appropriate response based on the current cashless state, particularly
- *          focusing on the ACTIVE state response where the session is established.
+ * @details Processes the MDB REVALUE LIMIT REQUEST command (0x0075) which is used
+ *          to request revalue limit information from the cashless device. This command
+ *          allows the VMC to query the cashless device about its revalue capabilities
+ *          and limits. The function validates the command structure and sends an
+ *          appropriate response containing revalue limit data based on the current
+ *          cashless state, particularly during SESSION_IDLE state.
  *
  * @param RxBuffer Pointer to buffer containing the received command data
  * @param cmd_length Length of the received command in the buffer
  *
- * @note This function is primarily designed to handle session establishment
- *       in the ACTIVE state. When in this state, it sends a four-element response
- *       with specific data values (0x000F, 0x0001, 0x003B, 0x014B) to acknowledge
- *       the session start request.
+ * @note This function is primarily designed to handle revalue limit requests
+ *       in the SESSION_IDLE state. When in this state, it sends a four-element response
+ *       with specific revalue limit data (0x000F, 0x0001, 0x003B, 0x014B) to inform
+ *       the VMC about the cashless device's revalue capabilities and limitations.
  *
  * @warning Command validation checks both the first and last bytes of the command
  *          to ensure proper command structure before processing. The function will
- *          not respond to commands received in states other than ACTIVE unless 
+ *          not respond to commands received in states other than SESSION_IDLE unless 
  *          error handling is implemented.
  */
 static void handle_cmd_0x0075(uint16_t *RxBuffer, uint8_t cmd_length) {
@@ -721,7 +787,7 @@ static void handle_cmd_0x0075(uint16_t *RxBuffer, uint8_t cmd_length) {
         
         // Process command based on current Cashless state
         switch (MDB_StateManager.Cashless_StateHandler) {
-            case STATE_ACTIVE:
+            case STATE_SESSION_IDLE:
                 // During active state
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x000F;
                 VMC_CMDs[cmd_index].CMD_Response[1] = 0x0001;
@@ -777,8 +843,8 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
     // This is a simple command with just one byte 
     // Process command based on current Cashless state
     switch (MDB_StateManager.Cashless_StateHandler) {
-        case STATE_ACTIVE:
-            // During active state
+        case STATE_SESSION_IDLE:
+            // During session idle state
             switch (RxBuffer[1])  // Check the sub-command
             {
             case 0x01FF:
@@ -787,6 +853,14 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response_Length = 1;
                 // Transition to vend request state
                 MDB_StateManager.Cashless_StateHandler = STATE_VEND_REQ;
+                break;
+            case 0x00BF:
+                VMC_CMDs[cmd_index].CMD_Response[0] = 0x0007;
+                VMC_CMDs[cmd_index].CMD_Response[1] = 0x0107;
+                VMC_CMDs[cmd_index].CMD_Response_Length = 2;
+                MDB_BusManager.ACK_Waiting = true; // Set ACK waiting flag
+                MDB_StateManager.Cashless_State_Change_Request = true; // Request state change
+                MDB_StateManager.Cashless_Req_State = STATE_SESSION_IDLE; // Request transition to SESSION_IDLE
                 break;
             default:
                 //TODO Handle error
@@ -803,8 +877,8 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
                 // Standard ACK
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0100;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 1;
-                // Transition to active state
-                MDB_StateManager.Cashless_StateHandler = STATE_ACTIVE;
+                // Transition to session idle state
+                MDB_StateManager.Cashless_StateHandler = STATE_SESSION_IDLE;
                 break;
             default:
                 //TODO Handle error
@@ -812,17 +886,17 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
                 break;
             }
             break;
-
         case STATE_CANCEL_SESSION:
-            // During vend process state
+            // During cancel session state
             switch (RxBuffer[1])  // Check the sub-command
             {
             case 0x00BF:
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0007;
                 VMC_CMDs[cmd_index].CMD_Response[1] = 0x0107;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 2;
-                // Transition to active state
-                MDB_StateManager.Cashless_StateHandler = STATE_IDLE;
+                MDB_BusManager.ACK_Waiting = true; // Set ACK waiting flag
+                MDB_StateManager.Cashless_State_Change_Request = true; // Request state change
+                MDB_StateManager.Cashless_Req_State = STATE_SESSION_IDLE; // Request transition to SESSION_IDLE
                 break;
             default:
                 //TODO Handle error

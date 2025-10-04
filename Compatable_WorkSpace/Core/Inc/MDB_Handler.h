@@ -34,11 +34,12 @@
  ******************************************************************************/
 
  typedef enum {
+    STATE_INACTIVE,                 /* Cashless device is inactive */
+    STATE_RESET,                    /* Cashless device is resetting */
     STATE_DISABLED,                 /* Cashless device is disabled */
-    STATE_IDLE,                     /* Cashless device is idle */
-    STATE_ACTIVE,                   /* Cashless device is active */
+    STATE_ENABLED,                  /* Cashless device is enabled */
+    STATE_SESSION_IDLE,             /* Cashless device is Session idle */
     STATE_INIT,                     /* Cashless device is initializing */
-    STATE_RESTART,                  /* Cashless device is restarting */
     STATE_START_SESSION,            /* Cashless device Card is inserted */
     STATE_CANCEL_SESSION,           /* Cashless device Card is removed */
     STATE_VEND_REQ,                 /* Cashless device Vend request */
@@ -75,10 +76,12 @@ typedef struct {
 
 
 typedef struct{
-Peripheral_State_t Cashless_StateHandler;                   /* State of the Cashless device */
-    CMD_RX_State CMD_RX_StateHandler;                       /* State of the command reception */
-    CMD_TX_State CMD_TX_StateHandler;                       /* State of the command transmission */
-    CMD_Process_State CMD_Process_StateHandler;             /* State of the command processing */
+    Peripheral_State_t Cashless_StateHandler;                   /* State of the Cashless device */
+    CMD_RX_State CMD_RX_StateHandler;                           /* State of the command reception */
+    CMD_TX_State CMD_TX_StateHandler;                           /* State of the command transmission */
+    CMD_Process_State CMD_Process_StateHandler;                 /* State of the command processing */
+    bool Cashless_State_Change_Request;                         /* Flag indicating if state change is requested */
+    Peripheral_State_t Cashless_Req_State;
 }MDB_StateManager_t;
 
 
@@ -88,6 +91,7 @@ typedef struct {
     uint8_t MDB_RX_CMD_Index;               /* Current index for RX commands */
     uint8_t MDB_TX_CMD_Index;               /* Current index for TX commands */
     uint8_t MDB_Process_CMD_Index;          /* Current index for processing commands */
+    bool ACK_Waiting;                       /* Flag indicating if ACK is awaited */
 } MDB_BusManager_t;
 
 typedef void (*CmdHandlerFn)(uint16_t *RxBuffer, uint8_t cmd_length);
