@@ -44,7 +44,8 @@
     STATE_CANCEL_SESSION,           /* Cashless device Card is removed */
     STATE_VEND_REQ,                 /* Cashless device Vend request */
     STATE_VEND_PROCESS,             /* Cashless device Vend process */
-    STATE_ERROR                     /* Cashless device encountered an error */
+    STATE_ERROR,                    /* Cashless device encountered an error */
+    STATE_WAIT_ACK                  /* Cashless device is waiting for ACK */
 } Peripheral_State_t;
 
 typedef enum {
@@ -92,6 +93,8 @@ typedef struct {
     uint8_t MDB_TX_CMD_Index;               /* Current index for TX commands */
     uint8_t MDB_Process_CMD_Index;          /* Current index for processing commands */
     bool ACK_Waiting;                       /* Flag indicating if ACK is awaited */
+    uint8_t ACK_Skip_Count;                 /* Counter for skipping receives before ACK */
+    uint8_t ACK_Expected_Skip;              /* How many receives to skip before ACK */
 } MDB_BusManager_t;
 
 typedef void (*CmdHandlerFn)(uint16_t *RxBuffer, uint8_t cmd_length);

@@ -76,7 +76,9 @@ MDB_BusManager_t MDB_BusManager = {
     .MDB_RX_CMD_Index = VMC_CMD_MAX_NUMBER,             /* Initialize to a default value */
     .MDB_TX_CMD_Index = VMC_CMD_MAX_NUMBER,             /* Initialize to a default value */
     .MDB_Process_CMD_Index = VMC_CMD_MAX_NUMBER,        /* Initialize to a default value */
-    .ACK_Waiting = false                                /* Initialize ACK waiting flag */
+    .ACK_Waiting = false,                               /* Initialize ACK waiting flag */
+    .ACK_Skip_Count = 0,                                /* Initialize to 0 */
+    .ACK_Expected_Skip = 0                              /* Initialize to 0 */
 };
 
 const CommandEntry_t command_table[] = {
@@ -217,8 +219,6 @@ void MDB_HandleCommand(uint16_t *RxBuffer, uint8_t cmd_index)
     switch (MDB_StateManager.CMD_Process_StateHandler)
     {
     case CMD_PROCESS_READY:
-        int temp_Rx_CMD_length = MDB_BusManager.RXBuffer_index;
-        int temp_VMC_CMD_Length = VMC_CMDs[cmd_index].CMD_Length;
 
         if (MDB_StateManager.CMD_RX_StateHandler == CMD_RX_DONE)
         {
@@ -291,6 +291,12 @@ static bool MDB_ProcessAck(uint16_t word) {
         return false;
     }
     
+    // Check if we need to skip more receives before looking for ACK
+    if (MDB_BusManager.ACK_Skip_Count < MDB_BusManager.ACK_Expected_Skip) {
+        MDB_BusManager.ACK_Skip_Count++;
+        return true; // Skip this receive
+    }
+
     if (word == 0x0000) { // ACK received
         if (MDB_StateManager.Cashless_State_Change_Request) {
             MDB_StateManager.Cashless_StateHandler = MDB_StateManager.Cashless_Req_State;
@@ -389,6 +395,26 @@ static void MDB_CompleteCommandReception(uint8_t cmd_index) {
 static bool MDB_ValidateCommandStructure(uint16_t *RxBuffer, uint8_t cmd_length, uint8_t cmd_index) {
     return (RxBuffer[0] == VMC_CMDs[cmd_index].CMD[0] &&
             RxBuffer[cmd_length-1] == VMC_CMDs[cmd_index].CMD[VMC_CMDs[cmd_index].CMD_Length-1]);
+}
+/**
+ * @brief Request an ACK from the VMC and optionally change state
+ * @param skip_count Number of subsequent commands to skip ACK for
+ * @param req_state State to transition to after ACK is received
+ * @return void
+ */
+static void MDB_RequesteAck(uint8_t skip_count, Peripheral_State_t req_state) {
+    MDB_BusManager.ACK_Waiting = true;
+    MDB_BusManager.ACK_Skip_Count = 0;
+    MDB_BusManager.ACK_Expected_Skip = skip_count;
+    if(STATE_WAIT_ACK == req_state)
+    {
+        MDB_StateManager.Cashless_State_Change_Request = false;
+    }
+    else
+    {
+        MDB_StateManager.Cashless_Req_State = req_state;
+        MDB_StateManager.Cashless_State_Change_Request = true;
+    }
 }
 /**
  * @brief Handle MDB RESET command (0x01E7)
@@ -526,9 +552,7 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response[10] = 0x01BD;
                 // Set the response length to exactly 11
                 VMC_CMDs[cmd_index].CMD_Response_Length = 11;
-                MDB_BusManager.ACK_Waiting = true; // Set ACK waiting flag
-                MDB_StateManager.Cashless_State_Change_Request = true; // Request state change
-                MDB_StateManager.Cashless_Req_State = STATE_SESSION_IDLE; // Request transition to SESSION_IDLE
+                MDB_RequesteAck(1, STATE_SESSION_IDLE);
                 break;
 
                 case STATE_SESSION_IDLE:
@@ -545,9 +569,7 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response[2] = 0x000F;
                 VMC_CMDs[cmd_index].CMD_Response[3] = 0x0114;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 4;
-                MDB_BusManager.ACK_Waiting = true; // Set ACK waiting flag
-                MDB_StateManager.Cashless_State_Change_Request = true; // Request state change
-                MDB_StateManager.Cashless_Req_State = STATE_VEND_PROCESS; // Request transition
+                MDB_RequesteAck(1, STATE_VEND_PROCESS);
                 break;
                 
             case STATE_VEND_PROCESS:
@@ -561,8 +583,7 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0004;
                 VMC_CMDs[cmd_index].CMD_Response[1] = 0x0104;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 2;
-                MDB_BusManager.ACK_Waiting = true; // Set ACK waiting flag
-                MDB_StateManager.Cashless_State_Change_Request = false; // No state change request
+                MDB_RequesteAck(1, STATE_WAIT_ACK);
             break;
 
             default:
@@ -663,9 +684,7 @@ static void handle_cmd_0x0074(uint16_t *RxBuffer, uint8_t cmd_length) {
             case STATE_INIT:
                 // During initialization state, provide initialization information
                 // The response is already defined in VMC_CMDs
-                MDB_BusManager.ACK_Waiting = true; // Set ACK waiting flag
-                MDB_StateManager.Cashless_State_Change_Request = true; // Set state change request flag
-                MDB_StateManager.Cashless_Req_State = STATE_DISABLED; // Request transition to Disabled state
+                MDB_RequesteAck(1, STATE_DISABLED);
                 break;
             default:
                 // Default device info response
@@ -720,25 +739,24 @@ static void handle_cmd_0x0077(uint16_t *RxBuffer, uint8_t cmd_length) {
                         // Standard response for disabled state
                         VMC_CMDs[cmd_index].CMD_Response[0] = 0x0001;
                         /* Feature lvl */
-                        VMC_CMDs[cmd_index].CMD_Response[1] = 0x0001;
+                        VMC_CMDs[cmd_index].CMD_Response[1] = 0x0002;
                         /* Country code byte_1 */
-                        VMC_CMDs[cmd_index].CMD_Response[2] = 0x00FF;
+                        VMC_CMDs[cmd_index].CMD_Response[2] = 0x0000;
                         /* Country code byte_2 */
-                        VMC_CMDs[cmd_index].CMD_Response[3] = 0x00FF;
+                        VMC_CMDs[cmd_index].CMD_Response[3] = 0x0000;
                         /* Scale factor */
                         VMC_CMDs[cmd_index].CMD_Response[4] = 0x0001;
                         /* Decimal places */
                         VMC_CMDs[cmd_index].CMD_Response[5] = 0x0000;
                         /* Application maximum response time */
-                        VMC_CMDs[cmd_index].CMD_Response[6] = 0x0091;
+                        VMC_CMDs[cmd_index].CMD_Response[6] = 0x0005;
                         /* Miscellaneous options */
                         VMC_CMDs[cmd_index].CMD_Response[7] = 0x0003;
-                        VMC_CMDs[cmd_index].CMD_Response[8] = 0x0195;
+                        VMC_CMDs[cmd_index].CMD_Response[8] = 0x010C;
                         // Set the response length to 9
                         VMC_CMDs[cmd_index].CMD_Response_Length = 9;
                         MDB_StateManager.Cashless_StateHandler = STATE_INIT; // Transition to INIT state in case it was RESET
-                        MDB_BusManager.ACK_Waiting = true; // Set ACK waiting flag
-                        MDB_StateManager.Cashless_State_Change_Request = false; // Clear state change request flag
+                        MDB_RequesteAck(1, STATE_WAIT_ACK);
                         break;
                     case 0x00FF:
                         // Standard ACK
@@ -865,9 +883,7 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0007;
                 VMC_CMDs[cmd_index].CMD_Response[1] = 0x0107;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 2;
-                MDB_BusManager.ACK_Waiting = true; // Set ACK waiting flag
-                MDB_StateManager.Cashless_State_Change_Request = true; // Request state change
-                MDB_StateManager.Cashless_Req_State = STATE_SESSION_IDLE; // Request transition to SESSION_IDLE
+                MDB_RequesteAck(1, STATE_SESSION_IDLE);
                 break;
             default:
                 //TODO Handle error
@@ -901,9 +917,7 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0007;
                 VMC_CMDs[cmd_index].CMD_Response[1] = 0x0107;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 2;
-                MDB_BusManager.ACK_Waiting = true; // Set ACK waiting flag
-                MDB_StateManager.Cashless_State_Change_Request = true; // Request state change
-                MDB_StateManager.Cashless_Req_State = STATE_SESSION_IDLE; // Request transition to SESSION_IDLE
+                MDB_RequesteAck(1, STATE_SESSION_IDLE);
                 break;
             default:
                 //TODO Handle error
