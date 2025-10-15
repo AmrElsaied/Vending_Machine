@@ -55,7 +55,9 @@ static uint8_t MDB_DetectCommand(uint16_t word);
 static bool MDB_IsCommandComplete(uint8_t cmd_index, uint16_t buffer_index, uint16_t last_word);
 static void MDB_InitCommandReception(uint8_t cmd_index, uint16_t first_word);
 static void MDB_CompleteCommandReception(uint8_t cmd_index);
-
+static void MDB_RequestAck(uint8_t skip_count, Peripheral_State_t req_state);
+static void MDB_UpdateVendingItemData(uint16_t *RxBuffer);
+static void Set_CurBalance(uint8_t new_balance);
 /******************************************************************************
  *                           Public Variables                                 *
  ******************************************************************************/
@@ -74,7 +76,6 @@ MDB_BusManager_t MDB_BusManager = {
     .MDB_RXbuffer = {0},
     .RXBuffer_index = 0,
     .MDB_RX_CMD_Index = VMC_CMD_MAX_NUMBER,             /* Initialize to a default value */
-    .MDB_TX_CMD_Index = VMC_CMD_MAX_NUMBER,             /* Initialize to a default value */
     .MDB_Process_CMD_Index = VMC_CMD_MAX_NUMBER,        /* Initialize to a default value */
     .ACK_Waiting = false,                               /* Initialize ACK waiting flag */
     .ACK_Skip_Count = 0,                                /* Initialize to 0 */
@@ -91,6 +92,8 @@ const CommandEntry_t command_table[] = {
     {handle_cmd_0x0076}              /* Command 0x0076 handler */
 };
 
+Vending_Item_Data_t Vending_Item_Data;
+Peripheral_balance_t Peripheral_Balance = {244, 0, 244};
 bool Vending_EN = false;
 
 /******************************************************************************
@@ -297,7 +300,8 @@ static bool MDB_ProcessAck(uint16_t word) {
         return true; // Skip this receive
     }
 
-    if (word == 0x0000) { // ACK received
+    if (word == 0x0000) // ACK received
+    {
         if (MDB_StateManager.Cashless_State_Change_Request) {
             MDB_StateManager.Cashless_StateHandler = MDB_StateManager.Cashless_Req_State;
             MDB_StateManager.Cashless_State_Change_Request = false;
@@ -402,7 +406,7 @@ static bool MDB_ValidateCommandStructure(uint16_t *RxBuffer, uint8_t cmd_length,
  * @param req_state State to transition to after ACK is received
  * @return void
  */
-static void MDB_RequesteAck(uint8_t skip_count, Peripheral_State_t req_state) {
+static void MDB_RequestAck(uint8_t skip_count, Peripheral_State_t req_state) {
     MDB_BusManager.ACK_Waiting = true;
     MDB_BusManager.ACK_Skip_Count = 0;
     MDB_BusManager.ACK_Expected_Skip = skip_count;
@@ -415,6 +419,106 @@ static void MDB_RequesteAck(uint8_t skip_count, Peripheral_State_t req_state) {
         MDB_StateManager.Cashless_Req_State = req_state;
         MDB_StateManager.Cashless_State_Change_Request = true;
     }
+}
+/**
+ * @brief Update vending item data from received MDB command buffer
+ * 
+ * @details Extracts and updates vending item information from the MDB command buffer.
+ *          This function is typically called when processing VEND_REQUEST commands
+ *          to capture the requested item's price and identification data. The function
+ *          validates the input buffer before updating the global vending item data structure.
+ *
+ * @param RxBuffer Pointer to buffer containing the received command data
+ *                 Expected format:
+ *                 RxBuffer[2]: Item price byte 1 (high byte)
+ *                 RxBuffer[3]: Item price byte 2 (low byte) 
+ *                 RxBuffer[4]: Item ID byte 1 (high byte)
+ *                 RxBuffer[5]: Item ID byte 2 (low byte)
+ *
+ * @note This function assumes the RxBuffer contains at least 6 elements.
+ *       It updates the global Vending_Item_Data structure with price and ID information
+ *       extracted from the VEND_REQUEST command (0x0076 with 0x01FF subcommand).
+ *
+ * @warning No bounds checking is performed on the RxBuffer. Caller must ensure
+ *          the buffer contains valid data at the expected indices before calling.
+ */
+static void MDB_UpdateVendingItemData(uint16_t *RxBuffer) {
+    
+    // Update vending item price (16-bit value split into two bytes)
+    Vending_Item_Data.Req_Item_Price_Hbyte = (uint8_t)RxBuffer[2];
+    Vending_Item_Data.Req_Item_Price_Lbyte = (uint8_t)RxBuffer[3];
+
+    // Update vending item ID (16-bit value split into two bytes)
+    Vending_Item_Data.Req_Item_ID_Hbyte = (uint8_t)RxBuffer[4];
+    Vending_Item_Data.Req_Item_ID_Lbyte = (uint8_t)RxBuffer[5];
+    
+    //Update the price in the response field also
+    Vending_Item_Data.Res_Item_Price_Hbyte = (0xFF - (Vending_Item_Data.Req_Item_Price_Lbyte))/2;
+    Vending_Item_Data.Res_Item_Price_Lbyte = (0xFF - (Vending_Item_Data.Req_Item_Price_Hbyte))/2;
+
+}
+
+/**
+ * @brief Calculate MDB checksum for command validation
+ * 
+ * @details Calculates a simple additive checksum for MDB command validation.
+ *          This is the standard checksum method used in most MDB implementations.
+ *          The checksum is calculated by summing all bytes in the command buffer
+ *          and returning the result as a 16-bit value for validation purposes.
+ *
+ * @param buffer Pointer to buffer containing the MDB command data
+ * @param length Length of the buffer in 16-bit words (not bytes)
+ *
+ * @return uint16_t Calculated checksum value
+ *
+ * @note This function assumes the buffer contains 16-bit words and calculates
+ *       the checksum by summing both high and low bytes of each word.
+ *       For MDB protocol, this checksum is typically used for command validation
+ *       rather than error detection during transmission.
+ *
+ * @warning Input validation should be performed by the caller. This function
+ *          does not check for null pointers or zero length.
+ */
+static uint16_t MDB_CalculateChecksum(uint16_t *buffer, uint8_t length) {
+    uint16_t checksum = 0;
+    // Sum all bytes in the buffer
+    for (uint8_t i = 0; i < length; i++) {
+        checksum += buffer[i];
+    }
+    checksum &= 0x00FF; // Keep only the lower 8 bits
+    return checksum;
+}
+/**
+ * @brief Set the current balance of the cashless device
+ * 
+ * @details Updates the current balance maintained by the cashless device.
+ *          This function is typically called after a successful transaction
+ *          or when the balance needs to be adjusted due to refunds or errors.
+ *          The balance is stored in a global structure and can be queried by
+ *          other parts of the system as needed.
+ *
+ * @param new_balance New balance value to set (in cents)
+ *
+ * @note The balance is represented as a 16-bit unsigned integer, allowing
+ *       for a maximum balance of 655.35 units (e.g., dollars) if using cents.
+ *       Ensure that the new balance does not exceed this limit before calling.
+ *
+ * @warning No bounds checking is performed on the new_balance parameter.
+ *          Caller must ensure the value is valid and within acceptable range.
+ */
+static void Set_CurBalance(uint8_t new_balance)
+{
+    if(new_balance <= Peripheral_Balance.Max_balance)
+    {
+        Peripheral_Balance.Cur_balance = new_balance;
+    }
+    else
+    {
+        // Handle error: balance exceeds maximum limit
+        Peripheral_Balance.Cur_balance = Peripheral_Balance.Max_balance; // Cap to max balance
+    }
+    Peripheral_Balance.Revalue_limit = Peripheral_Balance.Max_balance - Peripheral_Balance.Cur_balance;
+    
 }
 /**
  * @brief Handle MDB RESET command (0x01E7)
@@ -492,6 +596,7 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
     if (HAL_GPIO_ReadPin(VENDING_GPIO_Port, VENDING_Pin) == GPIO_PIN_RESET && Vending_EN == false)
     {
         MDB_StateManager.Cashless_StateHandler = STATE_START_SESSION;
+        Set_CurBalance(135);
         Vending_EN = true;
     }
     else
@@ -541,7 +646,7 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
                 // Each element is a two-byte value from the provided data (11 elements)
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0003;
                 VMC_CMDs[cmd_index].CMD_Response[1] = 0x0000;
-                VMC_CMDs[cmd_index].CMD_Response[2] = 0x00B9;
+                VMC_CMDs[cmd_index].CMD_Response[2] = Peripheral_Balance.Cur_balance;
                 VMC_CMDs[cmd_index].CMD_Response[3] = 0x0000;
                 VMC_CMDs[cmd_index].CMD_Response[4] = 0x0000;
                 VMC_CMDs[cmd_index].CMD_Response[5] = 0x0000;
@@ -549,10 +654,11 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response[7] = 0x0000;
                 VMC_CMDs[cmd_index].CMD_Response[8] = 0x0000;
                 VMC_CMDs[cmd_index].CMD_Response[9] = 0x0000;
-                VMC_CMDs[cmd_index].CMD_Response[10] = 0x01BD;
+                VMC_CMDs[cmd_index].CMD_Response[10] = MDB_CalculateChecksum(VMC_CMDs[cmd_index].CMD_Response, 10);
+                VMC_CMDs[cmd_index].CMD_Response[10] |= 0x0100; // Set mode bit
                 // Set the response length to exactly 11
                 VMC_CMDs[cmd_index].CMD_Response_Length = 11;
-                MDB_RequesteAck(1, STATE_SESSION_IDLE);
+                MDB_RequestAck(1, STATE_SESSION_IDLE);
                 break;
 
                 case STATE_SESSION_IDLE:
@@ -565,11 +671,12 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
             case STATE_VEND_REQ:
                 // Handle command during VEND_REQ state
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0005;
-                VMC_CMDs[cmd_index].CMD_Response[1] = 0x0000;
-                VMC_CMDs[cmd_index].CMD_Response[2] = 0x000F;
-                VMC_CMDs[cmd_index].CMD_Response[3] = 0x0114;
+                VMC_CMDs[cmd_index].CMD_Response[1] = Vending_Item_Data.Res_Item_Price_Hbyte;
+                VMC_CMDs[cmd_index].CMD_Response[2] = Vending_Item_Data.Res_Item_Price_Lbyte;
+                VMC_CMDs[cmd_index].CMD_Response[3] = MDB_CalculateChecksum(VMC_CMDs[cmd_index].CMD_Response, 3);
+                VMC_CMDs[cmd_index].CMD_Response[3] |= 0x0100; // Set mode bit
                 VMC_CMDs[cmd_index].CMD_Response_Length = 4;
-                MDB_RequesteAck(1, STATE_VEND_PROCESS);
+                MDB_RequestAck(1, STATE_VEND_PROCESS);
                 break;
                 
             case STATE_VEND_PROCESS:
@@ -583,7 +690,7 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0004;
                 VMC_CMDs[cmd_index].CMD_Response[1] = 0x0104;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 2;
-                MDB_RequesteAck(1, STATE_WAIT_ACK);
+                MDB_RequestAck(1, STATE_WAIT_ACK);
             break;
 
             default:
@@ -684,7 +791,7 @@ static void handle_cmd_0x0074(uint16_t *RxBuffer, uint8_t cmd_length) {
             case STATE_INIT:
                 // During initialization state, provide initialization information
                 // The response is already defined in VMC_CMDs
-                MDB_RequesteAck(1, STATE_DISABLED);
+                MDB_RequestAck(1, STATE_DISABLED);
                 break;
             default:
                 // Default device info response
@@ -756,7 +863,7 @@ static void handle_cmd_0x0077(uint16_t *RxBuffer, uint8_t cmd_length) {
                         // Set the response length to 9
                         VMC_CMDs[cmd_index].CMD_Response_Length = 9;
                         MDB_StateManager.Cashless_StateHandler = STATE_INIT; // Transition to INIT state in case it was RESET
-                        MDB_RequesteAck(1, STATE_WAIT_ACK);
+                        MDB_RequestAck(1, STATE_WAIT_ACK);
                         break;
                     case 0x00FF:
                         // Standard ACK
@@ -818,8 +925,10 @@ static void handle_cmd_0x0075(uint16_t *RxBuffer, uint8_t cmd_length) {
                 // During active state
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x000F;
                 VMC_CMDs[cmd_index].CMD_Response[1] = 0x0001;
-                VMC_CMDs[cmd_index].CMD_Response[2] = 0x003B;
-                VMC_CMDs[cmd_index].CMD_Response[3] = 0x014B;
+                VMC_CMDs[cmd_index].CMD_Response[2] = Peripheral_Balance.Revalue_limit;
+                VMC_CMDs[cmd_index].CMD_Response[3] = MDB_CalculateChecksum(VMC_CMDs[cmd_index].CMD_Response, 3);
+                VMC_CMDs[cmd_index].CMD_Response[3] |= 0x0100; // Set mode bit
+                // Set the response length to exactly 4
                 VMC_CMDs[cmd_index].CMD_Response_Length = 4;
                 break;
                 
@@ -878,12 +987,13 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response_Length = 1;
                 // Transition to vend request state
                 MDB_StateManager.Cashless_StateHandler = STATE_VEND_REQ;
+                MDB_UpdateVendingItemData(RxBuffer);
                 break;
             case 0x00BF:
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0007;
                 VMC_CMDs[cmd_index].CMD_Response[1] = 0x0107;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 2;
-                MDB_RequesteAck(1, STATE_SESSION_IDLE);
+                MDB_RequestAck(1, STATE_SESSION_IDLE);
                 break;
             default:
                 //TODO Handle error
@@ -917,7 +1027,7 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0007;
                 VMC_CMDs[cmd_index].CMD_Response[1] = 0x0107;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 2;
-                MDB_RequesteAck(1, STATE_SESSION_IDLE);
+                MDB_RequestAck(1, STATE_SESSION_IDLE);
                 break;
             default:
                 //TODO Handle error

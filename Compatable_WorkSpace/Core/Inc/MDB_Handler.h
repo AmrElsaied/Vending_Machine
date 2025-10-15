@@ -23,7 +23,7 @@
 /******************************************************************************
  *                             Module Config                                  *
  ******************************************************************************/
-#define MDB_RING_LEN  256U           /* power‑of‑two for cheap wrap   */
+#define MDB_RING_LEN  50U           /* power‑of‑two for cheap wrap   */
 #define MDB_BUS_TIMEOUT 10           /* MDB bus timeout in ticks   */
 /******************************************************************************
  *                          Macros & Constants                                *
@@ -75,6 +75,14 @@ typedef struct {
     volatile uint16_t rd;            /* read index   (task)           */
 } mdb_ring_t;
 
+typedef struct{
+    uint8_t Req_Item_Price_Hbyte;
+    uint8_t Req_Item_Price_Lbyte;
+    uint8_t Req_Item_ID_Hbyte;
+    uint8_t Req_Item_ID_Lbyte;
+    uint8_t Res_Item_Price_Hbyte;
+    uint8_t Res_Item_Price_Lbyte;
+}Vending_Item_Data_t;
 
 typedef struct{
     Peripheral_State_t Cashless_StateHandler;                   /* State of the Cashless device */
@@ -90,7 +98,6 @@ typedef struct {
 	uint16_t MDB_RXbuffer[36];              /* Buffer for received MDB data */
 	uint8_t RXBuffer_index;                 /* Current index in the RX buffer */
     uint8_t MDB_RX_CMD_Index;               /* Current index for RX commands */
-    uint8_t MDB_TX_CMD_Index;               /* Current index for TX commands */
     uint8_t MDB_Process_CMD_Index;          /* Current index for processing commands */
     bool ACK_Waiting;                       /* Flag indicating if ACK is awaited */
     uint8_t ACK_Skip_Count;                 /* Counter for skipping receives before ACK */
@@ -103,6 +110,11 @@ typedef struct {
     CmdHandlerFn handler;
 } CommandEntry_t;
 
+typedef struct {
+    uint8_t Max_balance;    /* Maximum balance allowed */
+    uint8_t Cur_balance;    /* Current balance */
+    uint8_t Revalue_limit;  /* Revalue limit */
+} Peripheral_balance_t;
 /**
  * @brief MDB module configuration structure
  */
