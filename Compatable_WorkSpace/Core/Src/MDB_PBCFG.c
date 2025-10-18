@@ -24,8 +24,6 @@
  ******************************************************************************/
 /* These UART handles should be defined in main.c or respective UART init files */
 extern UART_HandleTypeDef huart1;
-extern UART_HandleTypeDef huart2;
-
 /******************************************************************************
  *                        MDB Configuration Variable                          *
  ******************************************************************************/
@@ -53,7 +51,6 @@ extern UART_HandleTypeDef huart2;
  */
 MDB_Config_t mdb_config = {
     .mdb_uart = &huart1,                /* MDB bus communication UART */
-    .debug_uart = &huart2,              /* Debug output UART */
     .bus_timeout = MDB_BUS_TIMEOUT,     /* MDB bus timeout in milliseconds */
     .debug_enabled = false              /* Enable debug output by default */
 };

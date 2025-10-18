@@ -19,7 +19,6 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
-#include "usb_device.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -100,13 +99,13 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
  */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
-    // if (mdb_config.mdb_uart != NULL && huart->Instance == mdb_config.mdb_uart->Instance)
-    // {
-    //     MDB_UART_RxCallback(huart);
-    // }
-    if (esp_config.esp_uart != NULL && huart->Instance == esp_config.esp_uart->Instance) {
-        ESP_UART_RxCallback(huart);
+    if (mdb_config.mdb_uart != NULL && huart->Instance == mdb_config.mdb_uart->Instance)
+    {
+        MDB_UART_RxCallback(huart);
     }
+    // if (esp_config.esp_uart != NULL && huart->Instance == esp_config.esp_uart->Instance) {
+    //     ESP_UART_RxCallback(huart);
+    // }
 }
 
 
@@ -145,26 +144,14 @@ int main(void)
   MX_USART2_UART_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
-  ESP_Init();         /* Initialize ESP8266 module */
-    // Check initialization status
-    ESP_Status_t status = ESP_GetStatus();
-    if (status == ESP_STATUS_MQTT_CONNECTED) {
-        // ESP8266 is ready for use
-        // You can now subscribe to topics and publish messages
-        ESP_Subscribe();
-    } 
-    else {
-        while(1) {
-            // Initialization failed, handle error (e.g., blink an LED)
-        }
-  }
-  // MDB_BusInit();      /* Initialize MDB bus */
+  // ESP_Init();         /* Initialize ESP8266 module */
+  MDB_BusInit();      /* Initialize MDB bus */
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wmissing-noreturn"
   /* USER CODE END 2 */
 
   /* Init scheduler */
-  // osKernelInitialize();
+  osKernelInitialize();
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
@@ -184,11 +171,11 @@ int main(void)
 
   /* Create the thread(s) */
   /* creation of defaultTask */
-  // defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+  defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
-  // System_TaskCreate();                 /* create before scheduler        */
+  System_TaskCreate();                 /* create before scheduler        */
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -196,7 +183,7 @@ int main(void)
   /* USER CODE END RTOS_EVENTS */
 
   /* Start scheduler */
-  // osKernelStart();
+  osKernelStart();
 
   /* We should never get here as control is now taken by the scheduler */
 
@@ -205,15 +192,7 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-     // Check for incoming MQTT messages
-      ESP_ParseMQTTMessage();
-      
-      // Publish data periodically (example)
-      static uint32_t last_publish = 0;
-      if (HAL_GetTick() - last_publish > 30000) { // Every 30 seconds
-          ESP_PublishNumber();
-          last_publish = HAL_GetTick();
-      }
+
     /* USER CODE BEGIN 3 */
   }
 #pragma clang diagnostic pop
@@ -228,7 +207,6 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
-  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
@@ -255,12 +233,6 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USB;
-  PeriphClkInit.UsbClockSelection = RCC_USBCLKSOURCE_PLL_DIV1_5;
-  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
   }
@@ -406,8 +378,6 @@ static void MX_GPIO_Init(void)
 /* USER CODE END Header_StartDefaultTask */
 void StartDefaultTask(void *argument)
 {
-  /* init code for USB_DEVICE */
-  MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 5 */
   /* Infinite loop */
   for(;;)
