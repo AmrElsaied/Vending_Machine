@@ -22,6 +22,8 @@
 /* FreeRTOS core */
 #include "FreeRTOS.h"
 #include "task.h"
+/* System logging */
+#include "SYS_Logger.h"
 /******************************************************************************
  *                             Module Config                                  *
  ******************************************************************************/
@@ -58,6 +60,7 @@ static void MDB_CompleteCommandReception(uint8_t cmd_index);
 static void MDB_RequestAck(uint8_t skip_count, Peripheral_State_t req_state);
 static void MDB_UpdateVendingItemData(uint16_t *RxBuffer);
 static void Set_CurBalance(uint8_t new_balance);
+
 /******************************************************************************
  *                           Public Variables                                 *
  ******************************************************************************/
@@ -95,7 +98,6 @@ const CommandEntry_t command_table[] = {
 Vending_Item_Data_t Vending_Item_Data;
 Peripheral_balance_t Peripheral_Balance = {244, 0, 244};
 bool Vending_EN = false;
-
 /******************************************************************************
  *                          Public Functions                                  *
  ******************************************************************************/
@@ -159,12 +161,12 @@ void MDB_BusInit(void)
 {
     // Validate configuration
     if (mdb_config.mdb_uart == NULL) {
-        MDB_DebugPrint("[MDB] Error: MDB UART handle not configured.\r\n");
+        ESP_LOG_ERROR(MDB_ERROR_UART_NOT_CONFIGURED,NO_DATA_PRESENT,NO_CONTEXT_PRESENT);
         return;
     }
     mdbRing_init(&rxRing);
     MDB_StartUARTReceive();    
-    MDB_DebugPrint("[MDB] Bus initialized successfully.\r\n");
+    MDB_PRINT_INFO("[MDB] Bus initialized successfully.");
 }
 
 /**
@@ -185,6 +187,7 @@ void MDB_ReceiveCommand(uint16_t word)
                 uint8_t cmd_index = MDB_DetectCommand(word);
                 if (cmd_index != VMC_CMD_MAX_NUMBER) {
                     MDB_InitCommandReception(cmd_index, word);
+                    MDB_PRINT_INFO("[MDB][INFO] Command 0x%04X detected, starting reception.\r\n", word);
                 }
             }
             break;
@@ -199,15 +202,16 @@ void MDB_ReceiveCommand(uint16_t word)
                 /* Check if command is complete */
                 if (MDB_IsCommandComplete(cmd_index, MDB_BusManager.RXBuffer_index, word)) {
                     MDB_CompleteCommandReception(cmd_index);
+                    MDB_PRINT_INFO("[MDB][INFO] Command 0x%04X reception complete.\r\n", VMC_CMDs[cmd_index].CMD[0]);
                 }
             }
             break;
             
         default:
             /* Handle error state */
-            // MDB_StateManager.CMD_RX_StateHandler = CMD_RX_READY;
-            // MDB_BusManager.RXBuffer_index = 0;
-            // TODO Handle error appropriately
+            /* Log the error */
+            MDB_LOG_ERROR(MDB_ERROR_INVALID_RX_STATE,(uint16_t)MDB_StateManager.CMD_RX_StateHandler, (uint8_t)MDB_BusManager.MDB_RX_CMD_Index);
+            MDB_PRINT_INFO("[MDB][ERROR] Invalid CMD_RX_StateHandler: %d\r\n", (uint16_t)MDB_StateManager.CMD_RX_StateHandler);
             break;
     }
 }
@@ -225,10 +229,11 @@ void MDB_HandleCommand(uint16_t *RxBuffer, uint8_t cmd_index)
 
         if (MDB_StateManager.CMD_RX_StateHandler == CMD_RX_DONE)
         {
+            MDB_PRINT_INFO("[MDB][INFO] Command 0x%04X being processed.\r\n", VMC_CMDs[cmd_index].CMD[0]);
             MDB_StateManager.CMD_RX_StateHandler = CMD_RX_BUSY; // Set the state to BUSY
             MDB_BusManager.MDB_Process_CMD_Index = cmd_index; // Set the command index to the command being processed
-            command_table[MDB_BusManager.MDB_Process_CMD_Index].handler(RxBuffer, MDB_BusManager.RXBuffer_index);
-            // Command reception is done, process the command
+            command_table[MDB_BusManager.MDB_Process_CMD_Index].handler(RxBuffer, MDB_BusManager.RXBuffer_index);// Command reception is done, process the command
+            MDB_PRINT_INFO("[MDB][INFO] Command 0x%04X processing complete.\r\n", VMC_CMDs[cmd_index].CMD[0]);
             
             // Reset the RX for a new command
             MDB_BusManager.RXBuffer_index = 0;
@@ -243,14 +248,11 @@ void MDB_HandleCommand(uint16_t *RxBuffer, uint8_t cmd_index)
         }
         break;
     case CMD_PROCESS_INPROGRESS:
-        // TODO Handle error appropriately
-        return;
     case CMD_PROCESS_DONE:
-        // TODO Handle error appropriately
-        break;
     default:
         // Error: Command processing state is not ready or in progress
-        // TODO Handle error appropriately
+        /* Log the error */
+        MDB_LOG_ERROR(MDB_ERROR_INVALID_PROCESS_STATE, (uint16_t)MDB_StateManager.CMD_Process_StateHandler, (uint8_t)MDB_BusManager.MDB_Process_CMD_Index);
         return;
     }
 }
@@ -264,19 +266,7 @@ void MDB_SendResponseWithModeBit(uint16_t *data, uint8_t dataLength)
     if (mdb_config.mdb_uart != NULL) {
         HAL_UART_Transmit_IT(mdb_config.mdb_uart, (uint8_t *)data, dataLength);
     } else {
-        MDB_DebugPrint("[MDB] Error: MDB UART not configured for transmission.\r\n");
-    }
-}
-
-/**
- * @brief Print debug message to debug UART
- * @param message Null-terminated string to print
- * @note Debug output can be controlled via mdb_config.debug_enabled
- */
-void MDB_DebugPrint(const char *message)
-{
-    if (mdb_config.debug_enabled && mdb_config.debug_uart != NULL) {
-        HAL_UART_Transmit(mdb_config.debug_uart, (uint8_t*)message, strlen(message), HAL_MAX_DELAY);
+        ESP_LOG_ERROR(MDB_ERROR_UART_NOT_CONFIGURED,NO_DATA_PRESENT,NO_CONTEXT_PRESENT);
     }
 }
 
@@ -312,7 +302,8 @@ static bool MDB_ProcessAck(uint16_t word) {
         // Unexpected word while waiting for ACK
         MDB_BusManager.ACK_Waiting = false;
         MDB_StateManager.Cashless_State_Change_Request = false;
-        // TODO: Handle error appropriately
+        /* Log the unexpected word */
+        MDB_LOG_ERROR(MDB_ERROR_UNEXPECTED_ACK_WORD, word, (uint8_t)MDB_BusManager.MDB_RX_CMD_Index);
         return true; // ACK sequence handled (even if error)
     }
 }
@@ -515,6 +506,7 @@ static void Set_CurBalance(uint8_t new_balance)
     else
     {
         // Handle error: balance exceeds maximum limit
+        MDB_LOG_ERROR(MDB_ERROR_BALANCE_EXCEEDS_MAXIMUM, (uint16_t)new_balance, MDB_BusManager.MDB_RX_CMD_Index);
         Peripheral_Balance.Cur_balance = Peripheral_Balance.Max_balance; // Cap to max balance
     }
     Peripheral_Balance.Revalue_limit = Peripheral_Balance.Max_balance - Peripheral_Balance.Cur_balance;
@@ -559,6 +551,7 @@ static void handle_cmd_0x01E7(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0100;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 1;
                 MDB_StateManager.Cashless_StateHandler = STATE_RESET; // Transition to RESET state
+                MDB_LOG_ERROR(MDB_ERROR_INVALID_STATE_FOR_RESET, (uint16_t)MDB_StateManager.Cashless_StateHandler, (uint8_t)cmd_index);
                 break;
         }
         if (VMC_CMDs[cmd_index].CMD_Response_Length > 0) { 
@@ -593,7 +586,7 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
     // Get the command index from the MDB_BusManager
     uint8_t cmd_index = MDB_BusManager.MDB_RX_CMD_Index;
     
-    if (HAL_GPIO_ReadPin(VENDING_GPIO_Port, VENDING_Pin) == GPIO_PIN_RESET && Vending_EN == false)
+    if (HAL_GPIO_ReadPin(VENDING_GPIO_Port, VENDING_Pin) == GPIO_PIN_RESET && Vending_EN == false && MDB_StateManager.Cashless_StateHandler == STATE_ENABLED)
     {
         MDB_StateManager.Cashless_StateHandler = STATE_START_SESSION;
         Set_CurBalance(135);
@@ -603,9 +596,13 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
     {
         //Do nothing
     }
-    if (HAL_GPIO_ReadPin(VENDING_GPIO_Port, VENDING_Pin) == GPIO_PIN_SET && Vending_EN == true)
+    if (HAL_GPIO_ReadPin(VENDING_GPIO_Port, VENDING_Pin) == GPIO_PIN_SET && Vending_EN == true && MDB_StateManager.Cashless_StateHandler == STATE_SESSION_IDLE)
     {
         MDB_StateManager.Cashless_StateHandler = STATE_CANCEL_SESSION;
+        Vending_EN = false;
+    }
+    else if (HAL_GPIO_ReadPin(VENDING_GPIO_Port, VENDING_Pin) == GPIO_PIN_SET && Vending_EN == true)
+    {
         Vending_EN = false;
     }
     // Verify the command structure is valid
@@ -668,8 +665,8 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response_Length = 1;
                 break;
                 
-            case STATE_VEND_REQ:
-                // Handle command during VEND_REQ state
+            case STATE_APPROVE_VEND_REQ:
+                // Handle command during APPROVE_VEND_REQ state
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0005;
                 VMC_CMDs[cmd_index].CMD_Response[1] = Vending_Item_Data.Res_Item_Price_Hbyte;
                 VMC_CMDs[cmd_index].CMD_Response[2] = Vending_Item_Data.Res_Item_Price_Lbyte;
@@ -678,7 +675,13 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response_Length = 4;
                 MDB_RequestAck(1, STATE_VEND_PROCESS);
                 break;
-                
+            case STATE_DENY_VEND_REQ:
+                // Handle command during DENY_VEND_REQ state
+                VMC_CMDs[cmd_index].CMD_Response[0] = 0x0006;
+                VMC_CMDs[cmd_index].CMD_Response[0] = 0x0106;
+                VMC_CMDs[cmd_index].CMD_Response_Length = 2;
+                MDB_RequestAck(1, STATE_CANCEL_SESSION);
+                break;
             case STATE_VEND_PROCESS:
                 // Handle command during VEND_PROCESS state
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0100;
@@ -695,6 +698,8 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
 
             default:
                 // Unknown state, no response
+                /* Log the error */
+                MDB_LOG_ERROR(MDB_ERROR_COMMAND_NOT_VALID_IN_STATE, (uint16_t)MDB_StateManager.Cashless_StateHandler, (uint8_t)cmd_index);
                 VMC_CMDs[cmd_index].CMD_Response_Length = 0;
                 break;
         }
@@ -744,6 +749,7 @@ static void handle_cmd_0x01D5(uint16_t *RxBuffer, uint8_t cmd_length) {
                 break;
             default:
                 // Unknown state, use default response
+                MDB_LOG_ERROR(MDB_ERROR_COMMAND_NOT_VALID_IN_STATE, (uint16_t)MDB_StateManager.Cashless_StateHandler, (uint8_t)cmd_index);
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0100;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 1;
                 MDB_StateManager.Cashless_StateHandler = STATE_ENABLED; // Transition to ENABLED state
@@ -796,6 +802,7 @@ static void handle_cmd_0x0074(uint16_t *RxBuffer, uint8_t cmd_length) {
             default:
                 // Default device info response
                 //TODO Handle the error
+                MDB_LOG_ERROR(MDB_ERROR_COMMAND_NOT_VALID_IN_STATE, (uint16_t)MDB_StateManager.Cashless_StateHandler, (uint8_t)cmd_index);
                 VMC_CMDs[cmd_index].CMD_Response_Length = 0;
                 break;
         }
@@ -872,12 +879,13 @@ static void handle_cmd_0x0077(uint16_t *RxBuffer, uint8_t cmd_length) {
                         break;
                     default:
                         // TODO Handle error
+                        MDB_LOG_ERROR(MDB_ERROR_SUB_COMMAND_NOT_RECOGNIZED, (uint16_t)RxBuffer[1], (uint8_t)cmd_index);
                         VMC_CMDs[cmd_index].CMD_Response_Length = 0;
                         return;
                 }
                 break;
             default:
-                // TODO Handle error
+                MDB_LOG_ERROR(MDB_ERROR_COMMAND_NOT_VALID_IN_STATE, NO_DATA_PRESENT, (uint8_t)cmd_index);
                 VMC_CMDs[cmd_index].CMD_Response_Length = 0;
                 break;
         }
@@ -933,7 +941,9 @@ static void handle_cmd_0x0075(uint16_t *RxBuffer, uint8_t cmd_length) {
                 break;
                 
             default:
-                //TODO Handle the error
+                // Unknown state, no response
+                /* Log the error */
+                MDB_LOG_ERROR(MDB_ERROR_COMMAND_NOT_VALID_IN_STATE, NO_DATA_PRESENT, (uint8_t)cmd_index);
                 VMC_CMDs[cmd_index].CMD_Response_Length = 0;
                 break;
         }
@@ -986,17 +996,28 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0100;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 1;
                 // Transition to vend request state
-                MDB_StateManager.Cashless_StateHandler = STATE_VEND_REQ;
                 MDB_UpdateVendingItemData(RxBuffer);
+                if(Vending_Item_Data.Res_Item_Price_Lbyte < Peripheral_Balance.Cur_balance)
+                {
+                    // Not enough balance to vend
+                    MDB_StateManager.Cashless_StateHandler = STATE_DENY_VEND_REQ;
+                }
+                else
+                {
+                    // Enough balance to vend
+                    MDB_StateManager.Cashless_StateHandler = STATE_APPROVE_VEND_REQ;
+                }
                 break;
             case 0x00BF:
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0007;
                 VMC_CMDs[cmd_index].CMD_Response[1] = 0x0107;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 2;
-                MDB_RequestAck(1, STATE_SESSION_IDLE);
+                MDB_RequestAck(1, STATE_ENABLED);
                 break;
             default:
-                //TODO Handle error
+                // No other sub-commands valid in this state
+                // Log the error
+                MDB_LOG_ERROR(MDB_ERROR_SUB_COMMAND_NOT_RECOGNIZED, (uint16_t)RxBuffer[1], (uint8_t)cmd_index);
                 VMC_CMDs[cmd_index].CMD_Response_Length = 0;
                 break;
             }
@@ -1014,7 +1035,9 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
                 MDB_StateManager.Cashless_StateHandler = STATE_SESSION_IDLE;
                 break;
             default:
-                //TODO Handle error
+                // No other sub-commands valid in this state
+                // Log the error
+                MDB_LOG_ERROR(MDB_ERROR_SUB_COMMAND_NOT_RECOGNIZED, (uint16_t)RxBuffer[1], (uint8_t)cmd_index);
                 VMC_CMDs[cmd_index].CMD_Response_Length = 0;
                 break;
             }
@@ -1027,26 +1050,27 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0007;
                 VMC_CMDs[cmd_index].CMD_Response[1] = 0x0107;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 2;
-                MDB_RequestAck(1, STATE_SESSION_IDLE);
+                MDB_RequestAck(1, STATE_ENABLED);
                 break;
             default:
-                //TODO Handle error
+                // No other sub-commands valid in this state
+                // Log the error
+                MDB_LOG_ERROR(MDB_ERROR_SUB_COMMAND_NOT_RECOGNIZED, (uint16_t)RxBuffer[1], (uint8_t)cmd_index);
                 VMC_CMDs[cmd_index].CMD_Response_Length = 0;
                 break;
             }
             break;
         default:
-            // Unknown state
-            //TODO Handle error
+            // Unknown state, no response
+            /* Log the error */
+            MDB_LOG_ERROR(MDB_ERROR_COMMAND_NOT_VALID_IN_STATE, NO_DATA_PRESENT, (uint8_t)cmd_index);
             VMC_CMDs[cmd_index].CMD_Response_Length = 0;
             break;
     }
     // If there is a response, send it
     if (VMC_CMDs[cmd_index].CMD_Response_Length > 0) {
-#if ENABLE_BV_TX == 1
         MDB_SendResponseWithModeBit(VMC_CMDs[cmd_index].CMD_Response,
                                     VMC_CMDs[cmd_index].CMD_Response_Length);
-#endif
         }
 }
 
@@ -1081,7 +1105,6 @@ void MDB_StartUARTReceive(void) {
     if (mdb_config.mdb_uart != NULL) {
         // Start UART receive with interrupt for single byte
         HAL_UART_Receive_IT(mdb_config.mdb_uart, (uint8_t *)mdb_rx_buf, 1);
-        MDB_DebugPrint("MDB: UART Receive Started\r\n");
     }
 }
 

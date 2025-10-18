@@ -23,8 +23,8 @@
 /******************************************************************************
  *                             Module Config                                  *
  ******************************************************************************/
-#define MDB_RING_LEN  50U           /* power‑of‑two for cheap wrap   */
-#define MDB_BUS_TIMEOUT 10           /* MDB bus timeout in ticks   */
+#define MDB_RING_LEN  50U                   /* power‑of‑two for cheap wrap   */
+#define MDB_BUS_TIMEOUT 10                  /* MDB bus timeout in ticks   */
 /******************************************************************************
  *                          Macros & Constants                                *
  ******************************************************************************/
@@ -42,7 +42,8 @@
     STATE_INIT,                     /* Cashless device is initializing */
     STATE_START_SESSION,            /* Cashless device Card is inserted */
     STATE_CANCEL_SESSION,           /* Cashless device Card is removed */
-    STATE_VEND_REQ,                 /* Cashless device Vend request */
+    STATE_APPROVE_VEND_REQ,                 /* Cashless device Vend request */
+    STATE_DENY_VEND_REQ,           /* Cashless device Deny Vend request */
     STATE_VEND_PROCESS,             /* Cashless device Vend process */
     STATE_ERROR,                    /* Cashless device encountered an error */
     STATE_WAIT_ACK                  /* Cashless device is waiting for ACK */
@@ -120,7 +121,6 @@ typedef struct {
  */
 typedef struct {
     UART_HandleTypeDef *mdb_uart;       /* MDB bus UART handle pointer */
-    UART_HandleTypeDef *debug_uart;        /* Debug output UART handle pointer */
     uint32_t bus_timeout;                  /* MDB bus timeout in milliseconds */
     bool debug_enabled;                    /* Enable/disable debug output */
 } MDB_Config_t;
@@ -329,13 +329,6 @@ void MDB_ReceiveCommand(uint16_t word);
  * MDB_BusInit();
  */
 void MDB_BusInit(void);
-
-/**
- * @brief Print debug message to debug UART
- * @param message Null-terminated string to print
- * @note Debug output can be controlled via mdb_config.debug_enabled
- */
-void MDB_DebugPrint(const char *message);
 
 /**
  * @brief UART receive complete callback for MDB communication
