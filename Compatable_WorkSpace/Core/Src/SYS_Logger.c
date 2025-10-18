@@ -270,16 +270,24 @@ void SYS_LogInfo(const char* format, ...) {
         char buffer[DEBUG_MESSAGE_MAX_LENGTH];
         va_list args;
         
+        // Add INFO prefix first
+        int prefix_len = snprintf(buffer, sizeof(buffer), "[INFO] ");
+        
+        // Append formatted message after prefix
         va_start(args, format);
-        vsnprintf(buffer, sizeof(buffer), format, args);
+        vsnprintf(buffer + prefix_len, sizeof(buffer) - prefix_len, format, args);
         va_end(args);
         
-        // Prepare message with INFO prefix
-        char final_message[DEBUG_MESSAGE_MAX_LENGTH + 20];
-        snprintf(final_message, sizeof(final_message), "[INFO] %s\r\n", buffer);
+        // Append newline
+        int len = strlen(buffer);
+        if (len < sizeof(buffer) - 2) {
+            buffer[len] = '\r';
+            buffer[len + 1] = '\n';
+            buffer[len + 2] = '\0';
+        }
         
         // Transmit via UART
-        SYS_TransmitUART(final_message);
+        SYS_TransmitUART(buffer);
     }
 }
 
