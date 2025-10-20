@@ -33,17 +33,19 @@
 /******************************************************************************
  *                          Macros & Constants                                *
  ******************************************************************************/
-#define ESP_UART_RX_BUFFER_SIZE     256  /* Size of ESP UART receive buffer */
+#define ESP_UART_RX_BUFFER_SIZE     512  /* Size of ESP UART receive buffer */
 #define ESP_RESPONSE_BUFFER_SIZE    512  /* Size of AT command response buffer */
 #define ESP_TOPIC_MAX_LENGTH        64   /* Maximum MQTT topic length */
 #define ESP_MESSAGE_MAX_LENGTH      128  /* Maximum MQTT message length */
+#define MAX_MESSAGE_BUFFER_SIZE 	256
+#define MAX_LINE_BUFFER_SIZE 128
 
 /* Default WiFi Credentials */
 #define ESP_DEFAULT_SSID            "MA_HOME"
 #define ESP_DEFAULT_PASSWORD        "01289878405"
 
 /* Default MQTT Broker Settings */
-#define ESP_DEFAULT_MQTT_BROKER     "192.168.1.104"
+#define ESP_DEFAULT_MQTT_BROKER     "192.168.1.102"
 #define ESP_DEFAULT_MQTT_PORT       1883
 #define ESP_DEFAULT_MQTT_TOPIC      "stm32/test123"
 #define ESP_DEFAULT_CLIENT_ID       "STM32"
@@ -54,6 +56,8 @@
 #define ESP_TCP_CONNECT_TIMEOUT     10000
 #define ESP_MQTT_CONNECT_TIMEOUT    10000
 #define ESP_RESTORE_TIMEOUT         5000
+
+#define RX_BUF_LEN   64
 
 /******************************************************************************
  *                          Type Definitions                                  *
@@ -72,6 +76,10 @@ typedef enum {
     ESP_STATUS_ERROR                 /* Error state */
 } ESP_Status_t;
 
+typedef enum {
+	ESP_STATE_PARSING_HEADER,
+	ESP_STATE_RECEIVING_PAYLOAD
+} esp_rx_state_t;
 /**
  * @brief MQTT message structure
  */
@@ -97,6 +105,8 @@ typedef struct {
     bool debug_enabled;              /* Enable/disable debug output */
 } ESP_Config_t;
 
+
+
 /******************************************************************************
  *                     Global Variables (extern)                              *
  ******************************************************************************/
@@ -108,6 +118,9 @@ typedef struct {
  */
 extern ESP_Config_t ESP8266_DefaultConfig;
 extern ESP_Config_t esp_config;
+extern volatile bool esp_length_detected;
+extern volatile bool payload_ready;
+
 /******************************************************************************
  *                        Function Declarations                               *
  ******************************************************************************/
@@ -145,6 +158,9 @@ void ESP_Restore(void);
  */
 HAL_StatusTypeDef ESP_SendAT(const char *cmd, const char *expect, uint32_t timeout);
 
+
+
+HAL_StatusTypeDef ESP_SendBinary(uint8_t *bin, size_t len, const char *expect, uint32_t timeout);
 /**
  * @brief Get current ESP8266 module status
  * @return Current module status
@@ -154,12 +170,12 @@ ESP_Status_t ESP_GetStatus(void);
 /**
  * @brief Publish data to MQTT topic
  */
-void ESP_PublishNumber(void);
+void ESP_Publish(const char *topic, const char *message, uint8_t qos);
 
 /**
  * @brief Subscribe to MQTT topic for incoming messages
  */
-void ESP_Subscribe(void);
+HAL_StatusTypeDef ESP_Subscribe(const char *topic, uint8_t qos);
 
 /**
  * @brief Parse incoming MQTT messages from UART buffer
@@ -178,5 +194,9 @@ void ESP_UART_RxCallback(UART_HandleTypeDef *huart);
  * @note Call this function after ESP_SetConfig() to start receiving data
  */
 void ESP_StartUARTReceive(void);
+
+
+
+void PingREQ(void);
 
 #endif /* ESP8266_HANDLER_H_ */

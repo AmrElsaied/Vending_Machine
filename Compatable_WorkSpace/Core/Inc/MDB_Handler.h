@@ -23,7 +23,7 @@
 /******************************************************************************
  *                             Module Config                                  *
  ******************************************************************************/
-#define MDB_RING_LEN  50U                   /* power‑of‑two for cheap wrap   */
+#define MDB_RING_LEN  40U                   /* power‑of‑two for cheap wrap   */
 #define MDB_BUS_TIMEOUT 10                  /* MDB bus timeout in ticks   */
 /******************************************************************************
  *                          Macros & Constants                                *

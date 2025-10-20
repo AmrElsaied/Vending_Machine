@@ -103,9 +103,9 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     {
         MDB_UART_RxCallback(huart);
     }
-    // if (esp_config.esp_uart != NULL && huart->Instance == esp_config.esp_uart->Instance) {
-    //     ESP_UART_RxCallback(huart);
-    // }
+    else if (esp_config.esp_uart != NULL && huart->Instance == esp_config.esp_uart->Instance) {
+        ESP_UART_RxCallback(huart);
+    }
 }
 
 
@@ -144,7 +144,7 @@ int main(void)
   MX_USART2_UART_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
-  // ESP_Init();         /* Initialize ESP8266 module */
+  ESP_Init();         /* Initialize ESP8266 module */
   MDB_BusInit();      /* Initialize MDB bus */
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wmissing-noreturn"

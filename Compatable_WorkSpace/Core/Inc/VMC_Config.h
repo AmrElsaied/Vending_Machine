@@ -32,7 +32,7 @@
  *                          Type Definitions                                  *
  ******************************************************************************/
 typedef struct{
-    uint16_t CMD[36];   /* Command buffer for MDB commands */
+    uint16_t CMD[5];   /* Command buffer for MDB commands */
     uint16_t CMD_Length; /* Length of the command buffer */
     uint16_t CMD_Response[36]; /* Response buffer for MDB commands */
     uint16_t CMD_Response_Length; /* Length of the response buffer */

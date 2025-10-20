@@ -16,6 +16,7 @@
  ******************************************************************************/
 #include "system_tasks.h"
 #include "MDB_Handler.h"
+#include "ESP8266_Handler.h"
 /******************************************************************************
  *                             Module Config                                  *
  ******************************************************************************/
@@ -35,13 +36,17 @@
 /******************************************************************************
  *                           Public Variables                                 *
  ******************************************************************************/
-TaskHandle_t mdbRxTaskHandle = NULL;            /* Handle for MDB receive task */
-TaskHandle_t mdbCMDProcessTaskHandle = NULL;    /* Handle for MDB command processing task */
+TaskHandle_t mdbRxTaskHandle = NULL;                /* Handle for MDB receive task */
+TaskHandle_t mdbCMDProcessTaskHandle = NULL;        /* Handle for MDB command processing task */
+TaskHandle_t espPublishTaskHandle = NULL;           /* Handle for ESP publish task */
+TaskHandle_t espAliveCheckTaskHandle = NULL;      /* Handle for ESP alive check task */
 /******************************************************************************
  *                      Private Function Prototypes                           *
  ******************************************************************************/
 static void mdbRxTask(void *argument);
 static void mdbCMDProcessTask(void *argument);
+static void espPublishTask(void *argument);
+static void espAliveCheckTask(void *argument);
 /******************************************************************************
  *                      Public Function Definitions                           *
  ******************************************************************************/
@@ -71,6 +76,21 @@ void System_TaskCreate(void)
         configMAX_PRIORITIES-2,  									/* priority (just below max)       */
         &mdbCMDProcessTaskHandle);         							/* return handle                   */
 
+    xTaskCreate(
+        espPublishTask,                 							/* task function                   */
+        "espPublishTask",               							/* name (for trace)                */
+        256,              									    	/* stack size in WORDS             */
+        NULL,                    									/* no pvParameters                 */
+        configMAX_PRIORITIES-4,  									/* priority (just below max)       */
+        &espPublishTaskHandle);         							/* return handle                   */
+
+    xTaskCreate(
+        espAliveCheckTask,                 							/* task function                   */
+        "espAliveCheckTask",               							/* name (for trace)                */
+        256,              									    	/* stack size in WORDS             */
+        NULL,                    									/* no pvParameters                 */
+        configMAX_PRIORITIES-5,  									/* priority (just below max)       */
+        &espAliveCheckTaskHandle);         							/* return handle                   */
 }
 
 /******************************************************************************
@@ -161,5 +181,66 @@ static void mdbCMDProcessTask(void *argument)
                           CMD_Index);
         /* notification value auto‑overwritten next time; nothing to clear */
     }
+}
+/**
+ * @brief ESP publish task that periodically publishes data to ESP module
+ * 
+ * @details This task runs periodically every 30ms to publish data to the ESP
+ *          module. It implements a delay-based periodic execution pattern to
+ *          ensure consistent timing between publish operations.
+ *
+ * @param argument Task parameter (unused in this implementation)
+ *
+ * @note This task has a lower priority (configMAX_PRIORITIES-4) and uses 256 words
+ *       of stack space. The 30ms period ensures regular communication updates
+ *       to the ESP module without overwhelming the system.
+ *
+ * @warning Ensure that ESP communication functions are non-blocking or have
+ *          appropriate timeouts to maintain the periodic timing.
+ */
+static void espPublishTask(void *argument)
+{
+    const TickType_t xDelay = pdMS_TO_TICKS(30000);  /* 30 ms period */
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+    char topic[] = "Publish/Topic";  /* Example topic */
+    char message[] = "Hello, ESP!";  /* Example message */
+    for (;;)
+    {
+        /* Wait for the next cycle */
+        vTaskDelayUntil(&xLastWakeTime, xDelay);
 
+        /* Add ESP publish logic here */
+        ESP_Publish(topic, message,1);
+    }
+}
+
+/**
+ * @brief ESP alive check task that periodically verifies ESP module connectivity
+ * 
+ * @details This task runs periodically every 40ms to check if the ESP module
+ *          is alive and responding. It implements a delay-based periodic execution
+ *          pattern to monitor the ESP module's health status and detect any
+ *          communication failures.
+ *
+ * @param argument Task parameter (unused in this implementation)
+ *
+ * @note This task has the lowest priority (configMAX_PRIORITIES-5) and uses 256 words
+ *       of stack space. The 40ms period provides regular health monitoring without
+ *       consuming excessive CPU resources.
+ *
+ * @warning This task should implement appropriate timeout and retry mechanisms
+ *          to handle ESP module failures gracefully.
+ */
+static void espAliveCheckTask(void *argument)
+{
+    const TickType_t xDelay = pdMS_TO_TICKS(40000);  /* 40 ms period */
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+
+    for (;;)
+    {
+        /* Wait for the next cycle */
+        vTaskDelayUntil(&xLastWakeTime, xDelay);
+
+        // PingREQ();
+    }
 }
