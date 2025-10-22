@@ -43,6 +43,9 @@ uint8_t esp_uart_callback_buffer[ESP_UART_RX_BUFFER_SIZE];
 volatile char esp_line_buffer[MAX_LINE_BUFFER_SIZE];
 volatile uint16_t esp_expected_len = 0;
 
+char g_mqtt_topic[MAX_TOPIC_BUFFER_SIZE];
+char g_mqtt_message[MAX_MESSAGE_BUFFER_SIZE];
+
 uint8_t esp_rx_byte;
 static volatile uint16_t esp_rx_head = 0;
 static volatile uint16_t esp_rx_tail = 0;
@@ -50,6 +53,8 @@ static volatile uint16_t esp_uart_rx_index = 0;
 
 static char esp_response_buffer[ESP_RESPONSE_BUFFER_SIZE];
 static ESP_Status_t esp_current_status = ESP_STATUS_UNINITIALIZED;
+esp_buffer_state esp_buffer_current_state = ESP_BUFFER_CHECK_NOK;
+
 ESP_Config_t esp_config = {
 		.wifi_ssid = ESP_DEFAULT_SSID,
 		.wifi_password = ESP_DEFAULT_PASSWORD,
@@ -419,7 +424,7 @@ void ESP_Publish(const char *topic, const char *message, uint8_t qos)
 {
 	//esp_debug_print("[ESP_PUBLISH] >>> Entering ESP_Publish()\r\n");
 	HAL_UART_AbortReceive(esp_config.esp_uart);
-    // NOTE: Changed esp_config.esp_uart to esp_config_uart for global pointer compatibility.
+	// NOTE: Changed esp_config.esp_uart to esp_config_uart for global pointer compatibility.
 	if (esp_config.esp_uart == NULL || topic == NULL || message == NULL)
 	{
 		//esp_debug_print("[ESP_PUBLISH] ERROR: Invalid argument(s)\r\n");
@@ -463,7 +468,7 @@ void ESP_Publish(const char *topic, const char *message, uint8_t qos)
 	sprintf(cipsendCmd, "AT+CIPSEND=%d", index);
 
 	//esp_debug_print("[ESP_PUBLISH] Sending AT+CIPSEND command...\r\n");
-    // Uses the synchronous ESP_SendAT
+	// Uses the synchronous ESP_SendAT
 	if (ESP_SendAT(cipsendCmd, ">", 2000) != HAL_OK)
 	{
 		//esp_debug_print("[ESP_PUBLISH] ERROR: Failed to get '>' prompt\r\n");
@@ -471,7 +476,7 @@ void ESP_Publish(const char *topic, const char *message, uint8_t qos)
 	}
 
 	//esp_debug_print("[ESP_PUBLISH] Sending MQTT PUBLISH packet...\r\n");
-    // NOTE: Changed esp_config.esp_uart to esp_config_uart
+	// NOTE: Changed esp_config.esp_uart to esp_config_uart
 	HAL_UART_Transmit(esp_config.esp_uart, packet, index, HAL_MAX_DELAY);
 	//esp_debug_print("[ESP_PUBLISH] MQTT PUBLISH packet sent\r\n");
 
@@ -484,7 +489,7 @@ void ESP_Publish(const char *topic, const char *message, uint8_t qos)
 
 		while (HAL_GetTick() - start_tick < 5000)  // 5 sec timeout
 		{
-            // NOTE: Changed esp_config.esp_uart to esp_config_uart
+			// NOTE: Changed esp_config.esp_uart to esp_config_uart
 			if (HAL_UART_Receive(esp_config.esp_uart, &rx_byte, 1, 100) == HAL_OK)
 			{
 				if (rx_byte == 0x40)
@@ -498,7 +503,7 @@ void ESP_Publish(const char *topic, const char *message, uint8_t qos)
 		}
 	}
 
-    //esp_debug_print("[ESP_PUBLISH] <<< Exiting ESP_Publish() without cleanup or re-arming ASYNC\r\n");
+	//esp_debug_print("[ESP_PUBLISH] <<< Exiting ESP_Publish() without cleanup or re-arming ASYNC\r\n");
 
 }
 
@@ -595,146 +600,163 @@ HAL_StatusTypeDef ESP_Subscribe(const char *topic, uint8_t qos)
  */
 void ESP_UART_RxCallback(UART_HandleTypeDef *huart)
 {
+
 	// Guard clause: Ensure it's the correct UART instance
-	    if (esp_config.esp_uart == NULL || huart->Instance != esp_config.esp_uart->Instance) {
-	        return;
-	    }
+	if (esp_config.esp_uart == NULL || huart->Instance != esp_config.esp_uart->Instance) {
+		return;
+	}
 
-	    // --- State: Receiving a bulk payload (Triggered when the full transfer is COMPLETE) ---
-	    if (esp_current_state == ESP_STATE_RECEIVING_PAYLOAD) {
+	// --- State: Receiving a bulk payload (Triggered when the full transfer is COMPLETE) ---
+	if (esp_current_state == ESP_STATE_RECEIVING_PAYLOAD) {
 
-	        uint8_t *payload_ptr = esp_uart_callback_buffer;
-	        uint16_t current_payload_len = esp_expected_len;
+		uint8_t *payload_ptr = esp_uart_callback_buffer;
+		uint16_t current_payload_len = esp_expected_len;
 
-	        bool parse_ok = true;
+		bool parse_ok = true;
 
-	        //esp_debug_print("\r\n--- Starting Payload Parsing ---\r\n");
+		//esp_debug_print("\r\n--- Starting Payload Parsing ---\r\n");
 
-	        // 1. Ignore the first two bytes and check length
-	        if (current_payload_len < 4) {
-	            //esp_debug_print("[ESP] Error: Payload too short for Topic/Message parsing.\r\n");
-	            parse_ok = false;
-	        }
+		// 1. Ignore the first two bytes and check length
+		if (current_payload_len < 4) {
+			//esp_debug_print("[ESP] Error: Payload too short for Topic/Message parsing.\r\n");
+			parse_ok = false;
+		}
 
-	        if (parse_ok) {
-	            payload_ptr += 2; // Skip first two bytes
-	            current_payload_len -= 2;
+		if (parse_ok) {
+			payload_ptr += 2; // Skip first two bytes
+			current_payload_len -= 2;
 
-	            // 2. Detect the Topic Length (Next 2 Bytes, Big-Endian)
-	            // Topic Length = (MSB << 8) | LSB
-	            uint16_t topic_len = (uint16_t)(payload_ptr[0] << 8) | payload_ptr[1];
+			// 2. Detect the Topic Length (Next 2 Bytes, Big-Endian)
+			// Topic Length = (MSB << 8) | LSB
+			uint16_t topic_len = (uint16_t)(payload_ptr[0] << 8) | payload_ptr[1];
 
-	            payload_ptr += 2; // Move past topic length bytes
-	            current_payload_len -= 2;
+			payload_ptr += 2; // Move past topic length bytes
+			current_payload_len -= 2;
 
-	            // 3. Validate Topic Length against remaining payload
-	            if (current_payload_len < topic_len) {
-	                //esp_debug_print("[ESP] Error: Topic length exceeds remaining payload data.\r\n");
-	                parse_ok = false;
-	            }
+			// 3. Validate Topic Length against remaining payload
+			if (current_payload_len < topic_len) {
+				//esp_debug_print("[ESP] Error: Topic length exceeds remaining payload data.\r\n");
+				parse_ok = false;
+			}
 
-	            // 4. Extract and Print the Topic
-	            if (parse_ok) {
-	                char topic_buffer[topic_len + 1]; // Local buffer for the topic string
-	                memcpy(topic_buffer, payload_ptr, topic_len);
-	                topic_buffer[topic_len] = '\0'; // Null-terminate
+			// 4. Extract and Store the Topic in Global Buffer
+			if (parse_ok) {
 
-	                char dbg[128];
-	                snprintf(dbg, sizeof(dbg), "[ESP] Detected Topic: %s (Length: %u)\r\n", topic_buffer, topic_len);
-	                //esp_debug_print(dbg);
+				uint16_t copy_len = topic_len;
 
-	                payload_ptr += topic_len; // Move past the topic string
-	                current_payload_len -= topic_len;
+				// Safety check: Truncate topic if it exceeds global buffer size
+				if (copy_len >= MAX_TOPIC_BUFFER_SIZE) {
+					//esp_debug_print("[ESP] Warning: Topic truncated due to buffer limit.\r\n");
+					copy_len = MAX_TOPIC_BUFFER_SIZE - 1;
+				}
 
-	                // 5. Extract and Print the Message (as String)
-	                uint16_t message_len = current_payload_len;
+				// Original VLA (now removed): char topic_buffer[topic_len + 1];
 
-	                if (message_len > 0 && message_len < MAX_MESSAGE_BUFFER_SIZE) {
-	                    char msg_buffer[message_len + 1]; // Local buffer for the message string
-	                    memcpy(msg_buffer, payload_ptr, message_len);
-	                    msg_buffer[message_len] = '\0'; // Null-terminate
+				memcpy(g_mqtt_topic, payload_ptr, copy_len);
+				g_mqtt_topic[copy_len] = '\0'; // Null-terminate the global buffer
 
-	                    char dbg_line[128];
-	                    snprintf(dbg_line, sizeof(dbg_line), "[ESP] Detected Message: %s\r\n", msg_buffer);
-	                    //esp_debug_print(dbg_line);
-	                } else if (message_len == 0) {
-	                     //esp_debug_print("[ESP] Detected Message: (Empty)\r\n");
-	                } else {
-	                     //esp_debug_print("[ESP] Error: Message length too large or invalid.\r\n");
-	                }
-	            }
-	        }
+//				char dbg[128];
+//				snprintf(dbg, sizeof(dbg), "[ESP] Detected Topic: %s (Length: %u)\r\n", g_mqtt_topic, topic_len);
+				//esp_debug_print(dbg);
 
-	        // --- Cleanup and State Reset (Always executed after payload completion) ---
-	        //esp_debug_print("--- Payload Parse Complete ---\r\n");
+				payload_ptr += topic_len; // Move past the original topic string length
+				current_payload_len -= topic_len;
 
-	        esp_expected_len = 0;
-	        esp_current_state = ESP_STATE_PARSING_HEADER;
+				// 5. Extract and Store the Message (as String) in Global Buffer
+				uint16_t message_len = current_payload_len;
 
-	        // Re-arm interrupt to look for the single byte that starts the next header ('+')
-	        HAL_UART_Receive_IT(esp_config.esp_uart, &esp_rx_byte, 1);
+				if (message_len > 0 && message_len < MAX_MESSAGE_BUFFER_SIZE) {
+					// Original VLA (now removed): char msg_buffer[message_len + 1];
 
-	        return;
-	    }
+					// Copy to global message buffer and null-terminate
+					memcpy(g_mqtt_message, payload_ptr, message_len);
+					g_mqtt_message[message_len] = '\0'; // Null-terminate the global buffer
 
-	    // --- State: Parsing the "+IPD,<len>:" header (Single byte reception) ---
-	    if (esp_current_state == ESP_STATE_PARSING_HEADER) {
+//					char dbg_line[128];
+//					snprintf(dbg_line, sizeof(dbg_line), "[ESP] Detected Message: %s\r\n", g_mqtt_message);
+					//esp_debug_print(dbg_line);
 
-	        static uint8_t state = 0;
-	        static char len_str[6];
-	        static uint8_t len_idx = 0;
-	        uint8_t ch = esp_rx_byte;
 
-	        // --- Detect "+IPD,<len>:" pattern ---
-	        switch (state) {
-	            case 0: // Looking for '+'
-	                if (ch == '+') state = 1;
-	                break;
-	            case 1: // Expecting 'I'
-	                state = (ch == 'I') ? 2 : 0;
-	                break;
-	            case 2: // Expecting 'P'
-	                state = (ch == 'P') ? 3 : 0;
-	                break;
-	            case 3: // Expecting 'D'
-	                state = (ch == 'D') ? 4 : 0;
-	                break;
-	            case 4: // Expecting ','
-	                state = (ch == ',') ? 5 : 0;
-	                break;
-	            case 5: // Collect digits until ':'
-	                if (ch >= '0' && ch <= '9') {
-	                    if (len_idx < sizeof(len_str) - 1)
-	                        len_str[len_idx++] = ch;
-	                } else if (ch == ':') {
-	                    len_str[len_idx] = '\0';
-	                    esp_expected_len = (uint16_t)atoi(len_str);
 
-	                    // Cleanup header parser state
-	                    len_idx = 0;
-	                    state = 0;
+				} else if (message_len == 0) {
+					//esp_debug_print("[ESP] Detected Message: (Empty)\r\n");
+					// If you want to re-publish empty messages, the call would go here as well.
+				} else {
+					//esp_debug_print("[ESP] Error: Message length too large or invalid.\r\n");
+				}
+			} // Now g_mqtt_topic and g_mqtt_message persist
+		}
 
-	                    if (esp_expected_len > 0 && esp_expected_len <= ESP_UART_RX_BUFFER_SIZE) {
+		// --- Cleanup and State Reset (Always executed after payload completion) ---
+		//esp_debug_print("--- Payload Parse Complete ---\r\n");
 
-	                        // **FIX: Length detected, IMMEDIATELY start bulk reception**
-	                        esp_current_state = ESP_STATE_RECEIVING_PAYLOAD;
-	                        HAL_UART_Receive_IT(esp_config.esp_uart, esp_uart_callback_buffer, esp_expected_len);
+		esp_expected_len = 0;
+		esp_current_state = ESP_STATE_PARSING_HEADER;
 
-	                        // We return here because the next interrupt will be for the full payload,
-	                        // and it needs to hit the RECEIVING_PAYLOAD state block above.
-	                        return;
-	                    }
-	                } else {
-	                    // Invalid char -> reset parser state
-	                    state = 0;
-	                    len_idx = 0;
-	                }
-	                break;
-	        }
+		// Re-arm interrupt to look for the single byte that starts the next header ('+')
+		HAL_UART_Receive_IT(esp_config.esp_uart, &esp_rx_byte, 1);
 
-	        // If still in the PARSING_HEADER state, re-arm for the next single byte.
-	        HAL_UART_Receive_IT(esp_config.esp_uart, &esp_rx_byte, 1);
-	    }
+		return;
+	}
+
+	// --- State: Parsing the "+IPD,<len>:" header (Single byte reception) ---
+	if (esp_current_state == ESP_STATE_PARSING_HEADER) {
+		// ... (rest of the header parsing logic remains the same)
+		static uint8_t state = 0;
+		static char len_str[6];
+		static uint8_t len_idx = 0;
+		uint8_t ch = esp_rx_byte;
+
+		// --- Detect "+IPD,<len>:" pattern ---
+		switch (state) {
+		case 0: // Looking for '+'
+			if (ch == '+') state = 1;
+			break;
+		case 1: // Expecting 'I'
+			state = (ch == 'I') ? 2 : 0;
+			break;
+		case 2: // Expecting 'P'
+			state = (ch == 'P') ? 3 : 0;
+			break;
+		case 3: // Expecting 'D'
+			state = (ch == 'D') ? 4 : 0;
+			break;
+		case 4: // Expecting ','
+			state = (ch == ',') ? 5 : 0;
+			break;
+		case 5: // Collect digits until ':'
+			if (ch >= '0' && ch <= '9') {
+				if (len_idx < sizeof(len_str) - 1)
+					len_str[len_idx++] = ch;
+			} else if (ch == ':') {
+				len_str[len_idx] = '\0';
+				esp_expected_len = (uint16_t)atoi(len_str);
+
+				// Cleanup header parser state
+				len_idx = 0;
+				state = 0;
+
+				if (esp_expected_len > 0 && esp_expected_len <= ESP_UART_RX_BUFFER_SIZE) {
+
+					// **FIX: Length detected, IMMEDIATELY start bulk reception**
+					esp_current_state = ESP_STATE_RECEIVING_PAYLOAD;
+					HAL_UART_Receive_IT(esp_config.esp_uart, esp_uart_callback_buffer, esp_expected_len);
+
+					// We return here because the next interrupt will be for the full payload,
+					// and it needs to hit the RECEIVING_PAYLOAD state block above.
+					return;
+				}
+			} else {
+				// Invalid char -> reset parser state
+				state = 0;
+				len_idx = 0;
+			}
+			break;
+		}
+
+		// If still in the PARSING_HEADER state, re-arm for the next single byte.
+		HAL_UART_Receive_IT(esp_config.esp_uart, &esp_rx_byte, 1);
+	}
 }
 
 
@@ -962,4 +984,30 @@ void PingREQ(void){
 	//esp_debug_print("Sent PINGREQ\r\n");
 	ESP_StartUARTReceive();
 
+}
+
+
+esp_buffer_state GetBuffer_State(void){
+	if(g_mqtt_message[0] == 'O' && g_mqtt_message[1] == 'K'){
+		esp_buffer_current_state = ESP_BUFFER_CHECK_START;
+	}
+	else if(g_mqtt_message[0] == 'N' && g_mqtt_message[1] == 'K'){
+		esp_buffer_current_state = ESP_BUFFER_CHECK_STOP;
+	}
+	else
+	{
+		esp_buffer_current_state = ESP_BUFFER_CHECK_NOK;
+	}
+	return esp_buffer_current_state;
+}
+
+void ResetBuffer_State(void) {
+
+	if(esp_buffer_current_state ==  ESP_BUFFER_CHECK_START){
+
+		memset(g_mqtt_message, 0, MAX_MESSAGE_BUFFER_SIZE);
+		memset(g_mqtt_topic, 0, MAX_MESSAGE_BUFFER_SIZE);
+
+		esp_buffer_current_state = ESP_BUFFER_CHECK_NOK;
+	}
 }

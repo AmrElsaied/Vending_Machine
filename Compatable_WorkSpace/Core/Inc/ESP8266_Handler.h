@@ -37,15 +37,16 @@
 #define ESP_RESPONSE_BUFFER_SIZE    512  /* Size of AT command response buffer */
 #define ESP_TOPIC_MAX_LENGTH        64   /* Maximum MQTT topic length */
 #define ESP_MESSAGE_MAX_LENGTH      128  /* Maximum MQTT message length */
-#define MAX_MESSAGE_BUFFER_SIZE 	256
-#define MAX_LINE_BUFFER_SIZE 128
+#define MAX_LINE_BUFFER_SIZE 		128
+#define MAX_TOPIC_BUFFER_SIZE 		128
+#define MAX_MESSAGE_BUFFER_SIZE 	128
 
 /* Default WiFi Credentials */
 #define ESP_DEFAULT_SSID            "MA_HOME"
 #define ESP_DEFAULT_PASSWORD        "01289878405"
 
 /* Default MQTT Broker Settings */
-#define ESP_DEFAULT_MQTT_BROKER     "192.168.1.102"
+#define ESP_DEFAULT_MQTT_BROKER     "192.168.1.110"
 #define ESP_DEFAULT_MQTT_PORT       1883
 #define ESP_DEFAULT_MQTT_TOPIC      "stm32/test123"
 #define ESP_DEFAULT_CLIENT_ID       "STM32"
@@ -80,6 +81,12 @@ typedef enum {
 	ESP_STATE_PARSING_HEADER,
 	ESP_STATE_RECEIVING_PAYLOAD
 } esp_rx_state_t;
+
+typedef enum {
+	ESP_BUFFER_CHECK_START,
+    ESP_BUFFER_CHECK_STOP,
+	ESP_BUFFER_CHECK_NOK
+} esp_buffer_state;
 /**
  * @brief MQTT message structure
  */
@@ -120,6 +127,10 @@ extern ESP_Config_t ESP8266_DefaultConfig;
 extern ESP_Config_t esp_config;
 extern volatile bool esp_length_detected;
 extern volatile bool payload_ready;
+
+extern char g_mqtt_topic[MAX_TOPIC_BUFFER_SIZE];
+extern char g_mqtt_message[MAX_MESSAGE_BUFFER_SIZE];
+extern esp_buffer_state esp_buffer_current_state;
 
 /******************************************************************************
  *                        Function Declarations                               *
@@ -198,5 +209,9 @@ void ESP_StartUARTReceive(void);
 
 
 void PingREQ(void);
+
+esp_buffer_state GetBuffer_State(void);
+
+void ResetBuffer_State(void);
 
 #endif /* ESP8266_HANDLER_H_ */

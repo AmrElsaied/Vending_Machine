@@ -24,6 +24,8 @@
 #include "task.h"
 /* System logging */
 #include "SYS_Logger.h"
+/*ESP Header*/
+#include "ESP8266_Handler.h"
 /******************************************************************************
  *                             Module Config                                  *
  ******************************************************************************/
@@ -586,24 +588,43 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
     // Get the command index from the MDB_BusManager
     uint8_t cmd_index = MDB_BusManager.MDB_RX_CMD_Index;
     
-    if (HAL_GPIO_ReadPin(VENDING_GPIO_Port, VENDING_Pin) == GPIO_PIN_RESET && Vending_EN == false && MDB_StateManager.Cashless_StateHandler == STATE_ENABLED)
+    // if (HAL_GPIO_ReadPin(VENDING_GPIO_Port, VENDING_Pin) == GPIO_PIN_RESET && Vending_EN == false && MDB_StateManager.Cashless_StateHandler == STATE_ENABLED)
+    // {
+    //     MDB_StateManager.Cashless_StateHandler = STATE_START_SESSION;
+    //     Set_CurBalance(135);
+    //     Vending_EN = true;
+    // }
+    // else
+    // {
+    //     //Do nothing
+    // }
+    // if (HAL_GPIO_ReadPin(VENDING_GPIO_Port, VENDING_Pin) == GPIO_PIN_SET && Vending_EN == true && MDB_StateManager.Cashless_StateHandler == STATE_SESSION_IDLE)
+    // {
+    //     MDB_StateManager.Cashless_StateHandler = STATE_CANCEL_SESSION;
+    //     Vending_EN = false;
+    // }
+    // else if (HAL_GPIO_ReadPin(VENDING_GPIO_Port, VENDING_Pin) == GPIO_PIN_SET && Vending_EN == true)
+    // {
+    //     Vending_EN = false;
+    // }
+
+    if (GetBuffer_State() == ESP_BUFFER_CHECK_START && Vending_EN == false && MDB_StateManager.Cashless_StateHandler == STATE_ENABLED)
     {
         MDB_StateManager.Cashless_StateHandler = STATE_START_SESSION;
         Set_CurBalance(135);
         Vending_EN = true;
+        ResetBuffer_State();
     }
-    else
-    {
-        //Do nothing
-    }
-    if (HAL_GPIO_ReadPin(VENDING_GPIO_Port, VENDING_Pin) == GPIO_PIN_SET && Vending_EN == true && MDB_StateManager.Cashless_StateHandler == STATE_SESSION_IDLE)
+    else if (GetBuffer_State() == ESP_BUFFER_CHECK_STOP && Vending_EN == true && MDB_StateManager.Cashless_StateHandler == STATE_SESSION_IDLE)
     {
         MDB_StateManager.Cashless_StateHandler = STATE_CANCEL_SESSION;
         Vending_EN = false;
+        ResetBuffer_State();
     }
-    else if (HAL_GPIO_ReadPin(VENDING_GPIO_Port, VENDING_Pin) == GPIO_PIN_SET && Vending_EN == true)
+    else if (GetBuffer_State() == ESP_BUFFER_CHECK_STOP && Vending_EN == true )
     {
         Vending_EN = false;
+        ResetBuffer_State();
     }
     // Verify the command structure is valid
     if (MDB_ValidateCommandStructure(RxBuffer, cmd_length, cmd_index)) {

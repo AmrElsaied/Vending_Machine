@@ -71,7 +71,7 @@ void System_TaskCreate(void)
     xTaskCreate(
         mdbCMDProcessTask,                 							/* task function                   */
         "mdbCMDProcessTask",               							/* name (for trace)                */
-        256,              									    	/* stack size in WORDS             */
+        384,              									    	/* stack size in WORDS             */
         NULL,                    									/* no pvParameters                 */
         configMAX_PRIORITIES-2,  									/* priority (just below max)       */
         &mdbCMDProcessTaskHandle);         							/* return handle                   */
@@ -79,7 +79,7 @@ void System_TaskCreate(void)
     xTaskCreate(
         espPublishTask,                 							/* task function                   */
         "espPublishTask",               							/* name (for trace)                */
-        256,              									    	/* stack size in WORDS             */
+        356,              									    	/* stack size in WORDS             */
         NULL,                    									/* no pvParameters                 */
         configMAX_PRIORITIES-4,  									/* priority (just below max)       */
         &espPublishTaskHandle);         							/* return handle                   */
@@ -87,7 +87,7 @@ void System_TaskCreate(void)
     xTaskCreate(
         espAliveCheckTask,                 							/* task function                   */
         "espAliveCheckTask",               							/* name (for trace)                */
-        256,              									    	/* stack size in WORDS             */
+        356,              									    	/* stack size in WORDS             */
         NULL,                    									/* no pvParameters                 */
         configMAX_PRIORITIES-5,  									/* priority (just below max)       */
         &espAliveCheckTaskHandle);         							/* return handle                   */
@@ -225,7 +225,7 @@ static void espPublishTask(void *argument)
  * @param argument Task parameter (unused in this implementation)
  *
  * @note This task has the lowest priority (configMAX_PRIORITIES-5) and uses 256 words
- *       of stack space. The 40ms period provides regular health monitoring without
+ *       of stack space. The 50ms period provides regular health monitoring without
  *       consuming excessive CPU resources.
  *
  * @warning This task should implement appropriate timeout and retry mechanisms
@@ -233,7 +233,7 @@ static void espPublishTask(void *argument)
  */
 static void espAliveCheckTask(void *argument)
 {
-    const TickType_t xDelay = pdMS_TO_TICKS(40000);  /* 40 ms period */
+    const TickType_t xDelay = pdMS_TO_TICKS(50000);  /* 50 ms period */
     TickType_t xLastWakeTime = xTaskGetTickCount();
 
     for (;;)
@@ -241,6 +241,6 @@ static void espAliveCheckTask(void *argument)
         /* Wait for the next cycle */
         vTaskDelayUntil(&xLastWakeTime, xDelay);
 
-        // PingREQ();
+        PingREQ();
     }
 }
