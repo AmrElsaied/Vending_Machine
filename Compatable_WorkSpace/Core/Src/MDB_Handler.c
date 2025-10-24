@@ -1093,7 +1093,7 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
                                     VMC_CMDs[cmd_index].CMD_Response_Length);
         }
         if (0x017F == RxBuffer[1]){
-            ESP_Publish("stm32/Vend","Done",1);
+            ESP_RequestPublish("stm32/Vend","Done",1);
         }
 }
 

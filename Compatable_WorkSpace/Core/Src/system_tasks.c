@@ -16,10 +16,13 @@
  ******************************************************************************/
 #include "system_tasks.h"
 #include "MDB_Handler.h"
+#include "queue.h"
 #include "ESP8266_Handler.h"
+#include <string.h>
 /******************************************************************************
  *                             Module Config                                  *
  ******************************************************************************/
+#define ESP_PUBLISH_QUEUE_SIZE          (10)        /* Max pending publish requests */
 
 /******************************************************************************
  *                            Private Macros                                  *
@@ -32,21 +35,22 @@
 /******************************************************************************
  *                          Private Variables                                 *
  ******************************************************************************/
+static QueueHandle_t espPublishQueue = NULL;       /* Queue for publish requests */
 
 /******************************************************************************
  *                           Public Variables                                 *
  ******************************************************************************/
 TaskHandle_t mdbRxTaskHandle = NULL;                /* Handle for MDB receive task */
 TaskHandle_t mdbCMDProcessTaskHandle = NULL;        /* Handle for MDB command processing task */
-TaskHandle_t espPublishTaskHandle = NULL;           /* Handle for ESP publish task */
-TaskHandle_t espAliveCheckTaskHandle = NULL;      /* Handle for ESP alive check task */
+TaskHandle_t espCommunicationTaskHandle = NULL;           /* Handle for ESP publish task */
 /******************************************************************************
  *                      Private Function Prototypes                           *
  ******************************************************************************/
 static void mdbRxTask(void *argument);
 static void mdbCMDProcessTask(void *argument);
-static void espPublishTask(void *argument);
-static void espAliveCheckTask(void *argument);
+static void espCommunicationTask(void *argument);
+static uint8_t safe_string_copy(char* dest, const char* src, uint8_t dest_size);
+static uint8_t safe_strlen(const char* str, uint8_t max_len);
 /******************************************************************************
  *                      Public Function Definitions                           *
  ******************************************************************************/
@@ -58,6 +62,12 @@ static void espAliveCheckTask(void *argument);
  */
 void System_TaskCreate(void)
 {
+    /* Create ESP publish request queue */
+    espPublishQueue = xQueueCreate(ESP_PUBLISH_QUEUE_SIZE, sizeof(ESP_PublishRequest_t));
+    if (espPublishQueue == NULL) {
+        /* Queue creation failed - handle error */
+        return;
+    }
     /* Stack size is in WORDS (not bytes) for xTaskCreate.     */
 
     xTaskCreate(
@@ -77,22 +87,45 @@ void System_TaskCreate(void)
         &mdbCMDProcessTaskHandle);         							/* return handle                   */
 
     xTaskCreate(
-        espPublishTask,                 							/* task function                   */
-        "espPublishTask",               							/* name (for trace)                */
-        356,              									    	/* stack size in WORDS             */
-        NULL,                    									/* no pvParameters                 */
-        configMAX_PRIORITIES-4,  									/* priority (just below max)       */
-        &espPublishTaskHandle);         							/* return handle                   */
-
-    xTaskCreate(
-        espAliveCheckTask,                 							/* task function                   */
-        "espAliveCheckTask",               							/* name (for trace)                */
-        356,              									    	/* stack size in WORDS             */
-        NULL,                    									/* no pvParameters                 */
-        configMAX_PRIORITIES-5,  									/* priority (just below max)       */
-        &espAliveCheckTaskHandle);         							/* return handle                   */
+        espCommunicationTask,
+        "espCommunicationTask",
+        512,                                                       /* Increased stack for combined functionality */
+        NULL,
+        configMAX_PRIORITIES-4,
+        &espCommunicationTaskHandle);       				        /* return handle                   */
 }
 
+/**
+ * @brief Request ESP publish operation from other tasks (optimized with memcpy)
+ */
+bool ESP_RequestPublish(const char* topic, const char* message, uint8_t qos)
+{
+    if (topic == NULL || message == NULL || espPublishQueue == NULL) {
+        return false;
+    }
+    
+    ESP_PublishRequest_t request;
+    
+    /* Fast string copying with memcpy - much better than strncpy */
+    safe_string_copy(request.topic, topic, ESP_TASK_MAX_TOPIC_LEN);
+    safe_string_copy(request.message, message, ESP_TASK_MAX_MESSAGE_LEN);
+    
+    request.qos = qos;
+    
+    /* Send to queue (non-blocking) */
+    return (xQueueSend(espPublishQueue, &request, 0) == pdPASS);
+}
+/**
+ * @brief Get number of pending publish requests
+ */
+uint32_t ESP_GetPendingPublishCount(void)
+{
+    if (espPublishQueue == NULL) {
+        return 0;
+    }
+    
+    return (uint32_t)uxQueueMessagesWaiting(espPublishQueue);
+}
 /******************************************************************************
  *                      Private Function Definitions                          *
  ******************************************************************************/
@@ -184,64 +217,83 @@ static void mdbCMDProcessTask(void *argument)
     }
 }
 /**
- * @brief ESP publish task that periodically publishes data to ESP module
+ * @brief Combined ESP communication task handling both publish requests and ping
  * 
- * @details This task runs periodically every 30ms to publish data to the ESP
- *          module. It implements a delay-based periodic execution pattern to
- *          ensure consistent timing between publish operations.
+ * @details This task handles two types of operations:
+ *          1. Process publish requests from other tasks via queue
+ *          2. Send ping requests if no activity for 40 seconds
+ *          
+ *          The task waits for publish requests with a 40-second timeout.
+ *          If timeout occurs (no publish activity), it sends a ping.
+ *          If a publish request is received, it processes the request immediately.
  *
- * @param argument Task parameter (unused in this implementation)
+ * @param argument Task parameter (unused)
  *
- * @note This task has a lower priority (configMAX_PRIORITIES-4) and uses 256 words
- *       of stack space. The 30ms period ensures regular communication updates
- *       to the ESP module without overwhelming the system.
+ * @note Priority: configMAX_PRIORITIES-4 (lower than MDB tasks)
+ *       Stack: 512 words to handle queue operations and ESP communication
+ *       Timeout: 40 seconds - triggers ping if no publish activity
  *
- * @warning Ensure that ESP communication functions are non-blocking or have
- *          appropriate timeouts to maintain the periodic timing.
+ * @warning Ensure ESP_Publish and PingREQ functions are non-blocking or have
+ *          appropriate timeouts to prevent blocking other operations.
  */
-static void espPublishTask(void *argument)
+static void espCommunicationTask(void *argument)
 {
-    const TickType_t xDelay = pdMS_TO_TICKS(30000);  /* 30 ms period */
-    TickType_t xLastWakeTime = xTaskGetTickCount();
-    char topic[] = "Publish/Topic";  /* Example topic */
-    char message[] = "Hello, ESP!";  /* Example message */
+    ESP_PublishRequest_t publishRequest;
+    const TickType_t xTimeout = pdMS_TO_TICKS(ESP_PING_TIMEOUT_MS); /* 40 seconds */
+    
     for (;;)
     {
-        /* Wait for the next cycle */
-        vTaskDelayUntil(&xLastWakeTime, xDelay);
-
-        /* Add ESP publish logic here */
-        // ESP_Publish(topic, message,1);
+        /* Wait for publish request or timeout after 40 seconds */
+        if (xQueueReceive(espPublishQueue, &publishRequest, xTimeout) == pdPASS)
+        {
+            
+            /* Call ESP publish function */
+            ESP_Publish(publishRequest.topic, publishRequest.message, publishRequest.qos);
+            
+        }
+        else
+        {
+            /* Timeout occurred - no publish requests for 40 seconds */
+            PingREQ();
+            
+        }
+        
+        /* Optional: Yield to other tasks */
+        taskYIELD();
     }
 }
-
 /**
- * @brief ESP alive check task that periodically verifies ESP module connectivity
- * 
- * @details This task runs periodically every 40ms to check if the ESP module
- *          is alive and responding. It implements a delay-based periodic execution
- *          pattern to monitor the ESP module's health status and detect any
- *          communication failures.
- *
- * @param argument Task parameter (unused in this implementation)
- *
- * @note This task has the lowest priority (configMAX_PRIORITIES-5) and uses 256 words
- *       of stack space. The 50ms period provides regular health monitoring without
- *       consuming excessive CPU resources.
- *
- * @warning This task should implement appropriate timeout and retry mechanisms
- *          to handle ESP module failures gracefully.
+ * @brief Calculate string length with maximum limit (optimized)
  */
-static void espAliveCheckTask(void *argument)
+static uint8_t safe_strlen(const char* str, uint8_t max_len)
 {
-    const TickType_t xDelay = pdMS_TO_TICKS(50000);  /* 50 ms period */
-    TickType_t xLastWakeTime = xTaskGetTickCount();
-
-    for (;;)
-    {
-        /* Wait for the next cycle */
-        vTaskDelayUntil(&xLastWakeTime, xDelay);
-
-        PingREQ();
+    uint8_t len = 0;
+    while (len < max_len && str[len] != '\0') {
+        len++;
     }
+    return len;
+}
+/**
+ * @brief Fast and safe string copy using memcpy with length calculation
+ * @param dest Destination buffer
+ * @param src Source string
+ * @param dest_size Maximum destination buffer size (including null terminator)
+ * @return Actual length copied (excluding null terminator)
+ */
+static uint8_t safe_string_copy(char* dest, const char* src, uint8_t dest_size)
+{
+    if (dest_size == 0) return 0;
+    
+    // Calculate actual source length (bounded by destination size)
+    uint8_t src_len = safe_strlen(src, dest_size - 1);
+    
+    // Copy exact number of bytes using memcpy (fast!)
+    if (src_len > 0) {
+        memcpy(dest, src, src_len);
+    }
+    
+    // Ensure null termination
+    dest[src_len] = '\0';
+    
+    return src_len;
 }

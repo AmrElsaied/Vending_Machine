@@ -76,4 +76,20 @@ extern mdb_ring_t rxRing;                       /* Ring buffer for MDB received 
  */
  void System_TaskCreate(void);
 
+ /**
+ * @brief Request ESP publish operation from other tasks
+ * 
+ * @param topic MQTT topic string
+ * @param message MQTT message string  
+ * @param qos Quality of Service level (0, 1, or 2)
+ * @return true if request was queued successfully, false if queue full
+ */
+bool ESP_RequestPublish(const char* topic, const char* message, uint8_t qos);
+
+/**
+ * @brief Get number of pending publish requests
+ * 
+ * @return Number of requests waiting in queue
+ */
+uint32_t ESP_GetPendingPublishCount(void);
 #endif /* SYSTEM_TASKS_H_ */

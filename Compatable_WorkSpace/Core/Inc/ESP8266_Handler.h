@@ -29,6 +29,9 @@
 /* UART Configuration */
 #define ESP_UART_INSTANCE           USART1    /* ESP8266 UART instance */
 #define ESP_DEBUG_UART_INSTANCE     USART2    /* Debug UART instance */
+#define ESP_PING_TIMEOUT_MS             (40000)     /* 40 seconds ping timeout */
+#define ESP_TASK_MAX_TOPIC_LEN          (64)        /* Maximum topic length */
+#define ESP_TASK_MAX_MESSAGE_LEN        (128)       /* Maximum message length */
 
 /******************************************************************************
  *                          Macros & Constants                                *
@@ -87,16 +90,15 @@ typedef enum {
     ESP_BUFFER_CHECK_STOP,
 	ESP_BUFFER_CHECK_NOK
 } esp_buffer_state;
+
 /**
- * @brief MQTT message structure
+ * @brief ESP publish request structure
  */
 typedef struct {
-    char topic[ESP_TOPIC_MAX_LENGTH];        /* MQTT topic */
-    char message[ESP_MESSAGE_MAX_LENGTH];    /* MQTT message payload */
-    uint16_t topic_length;                   /* Length of topic string */
-    uint16_t message_length;                 /* Length of message string */
-} ESP_MQTT_Message_t;
-
+    char topic[ESP_TASK_MAX_TOPIC_LEN];             /* MQTT topic */
+    char message[ESP_TASK_MAX_MESSAGE_LEN];         /* MQTT message */
+    uint8_t qos;                                    /* Quality of Service level */
+} ESP_PublishRequest_t;
 /**
  * @brief ESP8266 configuration structure
  */
