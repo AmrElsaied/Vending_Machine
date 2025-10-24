@@ -146,8 +146,6 @@ int main(void)
   /* USER CODE BEGIN 2 */
   ESP_Init();         /* Initialize ESP8266 module */
   MDB_BusInit();      /* Initialize MDB bus */
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wmissing-noreturn"
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -195,7 +193,6 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
   }
-#pragma clang diagnostic pop
   /* USER CODE END 3 */
 }
 

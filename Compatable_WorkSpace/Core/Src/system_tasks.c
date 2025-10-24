@@ -121,6 +121,7 @@ static void mdbRxTask(void *argument)
 {
     uint16_t word;
     TickType_t lastCallTick = xTaskGetTickCount();
+    MDB_StartUARTReceive();   /* Start MDB UART reception */
     for (;;)
     {
         /* Wait until ISR "gives" a token (see ISR code). */
@@ -210,7 +211,7 @@ static void espPublishTask(void *argument)
         vTaskDelayUntil(&xLastWakeTime, xDelay);
 
         /* Add ESP publish logic here */
-        ESP_Publish(topic, message,1);
+        // ESP_Publish(topic, message,1);
     }
 }
 

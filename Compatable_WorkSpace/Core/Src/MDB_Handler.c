@@ -166,8 +166,7 @@ void MDB_BusInit(void)
         ESP_LOG_ERROR(MDB_ERROR_UART_NOT_CONFIGURED,NO_DATA_PRESENT,NO_CONTEXT_PRESENT);
         return;
     }
-    mdbRing_init(&rxRing);
-    MDB_StartUARTReceive();    
+    mdbRing_init(&rxRing);  
     MDB_PRINT_INFO("[MDB] Bus initialized successfully.");
 }
 
@@ -884,10 +883,10 @@ static void handle_cmd_0x0077(uint16_t *RxBuffer, uint8_t cmd_length) {
                         /* Decimal places */
                         VMC_CMDs[cmd_index].CMD_Response[5] = 0x0000;
                         /* Application maximum response time */
-                        VMC_CMDs[cmd_index].CMD_Response[6] = 0x0005;
+                        VMC_CMDs[cmd_index].CMD_Response[6] = 0x0055;
                         /* Miscellaneous options */
                         VMC_CMDs[cmd_index].CMD_Response[7] = 0x0003;
-                        VMC_CMDs[cmd_index].CMD_Response[8] = 0x010C;
+                        VMC_CMDs[cmd_index].CMD_Response[8] = 0x015C;
                         // Set the response length to 9
                         VMC_CMDs[cmd_index].CMD_Response_Length = 9;
                         MDB_StateManager.Cashless_StateHandler = STATE_INIT; // Transition to INIT state in case it was RESET
@@ -1018,7 +1017,7 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response_Length = 1;
                 // Transition to vend request state
                 MDB_UpdateVendingItemData(RxBuffer);
-                if(Vending_Item_Data.Res_Item_Price_Lbyte < Peripheral_Balance.Cur_balance)
+                if(Vending_Item_Data.Res_Item_Price_Lbyte > Peripheral_Balance.Cur_balance)
                 {
                     // Not enough balance to vend
                     MDB_StateManager.Cashless_StateHandler = STATE_DENY_VEND_REQ;
@@ -1092,6 +1091,9 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
     if (VMC_CMDs[cmd_index].CMD_Response_Length > 0) {
         MDB_SendResponseWithModeBit(VMC_CMDs[cmd_index].CMD_Response,
                                     VMC_CMDs[cmd_index].CMD_Response_Length);
+        }
+        if (0x017F == RxBuffer[1]){
+            ESP_Publish("stm32/Vend","Done",1);
         }
 }
 
