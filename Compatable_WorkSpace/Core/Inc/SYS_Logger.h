@@ -44,45 +44,17 @@
  *                         Private Data Types                                 *
  ******************************************************************************/
 typedef enum {
-    MDB_ERROR_NONE = 0x00,                    /* No error - successful operation */
-    // Communication Errors (0x10-0x1F)
-    MDB_ERROR_UART_NOT_CONFIGURED = 0x10,     /* UART handle not configured in mdb_config */    
-    // Buffer Management Errors (0x20-0x2F)
-    // Command Processing Errors (0x30-0x3F)
-    MDB_ERROR_SUB_COMMAND_NOT_RECOGNIZED = 0x30,  /* Subcommand not recognized in 0x0076/0x0077 */
-    MDB_ERROR_INVALID_COMMAND_STRUCTURE = 0x31, /* Command structure validation failed */
-    MDB_ERROR_COMMAND_LENGTH_MISMATCH = 0x32, /* Received command length doesn't match expected */
-    MDB_ERROR_INCOMPLETE_COMMAND = 0x33,      /* Command reception incomplete */
-
-    // State Management Errors (0x40-0x4F)
-    MDB_ERROR_INVALID_RX_STATE = 0x40,        /* Invalid CMD_RX_StateHandler value */
-    MDB_ERROR_INVALID_PROCESS_STATE = 0x41,   /* Invalid CMD_Process_StateHandler value */
-    MDB_ERROR_COMMAND_NOT_VALID_IN_STATE = 0x42, /* Command not valid in current state */
-    MDB_ERROR_INVALID_STATE_FOR_RESET = 0x43,   /* RESET command received in invalid state */
-
-    // ACKnowledgment Errors (0x50-0x5F)
-    MDB_ERROR_UNEXPECTED_ACK_WORD = 0x50,     /* Unexpected word received while waiting for ACK */
-    MDB_ERROR_ACK_TIMEOUT = 0x51,             /* ACK not received within timeout */
-
-    // Balance and Transaction Errors (0x60-0x6F)
-    MDB_ERROR_BALANCE_EXCEEDS_MAXIMUM = 0x60, /* Balance exceeds Max_balance limit */
-
-    // Vending Operation Errors (0x70-0x7F)
-    MDB_ERROR_VENDING_OPERATION_FAILED = 0x70, /* Vending operation failed */
-
-    // Configuration and Initialization Errors (0x80-0x8F)
-    MDB_ERROR_INITIALIZATION_FAILED = 0x80,   /* MDB system initialization failed */
-    MDB_ERROR_CONFIG_INVALID = 0x81,          /* Invalid configuration parameters */
-
-    // System and Resource Errors (0x90-0x9F)
-    MDB_ERROR_RESOURCE_BUSY = 0x90,           /* Resource currently busy */
-
-    // Protocol Specific Errors (0xA0-0xAF)
-
-    // Hardware Errors (0xB0-0xBF)
-
-    // Generic Errors (0xC0-0xFF)
-
+    MDB_ERROR_UART_NOT_CONFIGURED = 0x01,     /* UART handle not configured in mdb_config */    
+    MDB_ERROR_SUB_COMMAND_NOT_RECOGNIZED = 0x02,  /* Subcommand not recognized in 0x0076/0x0077 */
+    MDB_ERROR_INVALID_RX_STATE = 0x03,        /* Invalid CMD_RX_StateHandler value */
+    MDB_ERROR_INVALID_PROCESS_STATE = 0x04,   /* Invalid CMD_Process_StateHandler value */
+    MDB_ERROR_COMMAND_NOT_VALID_IN_STATE = 0x05, /* Command not valid in current state */
+    MDB_ERROR_INVALID_STATE_FOR_RESET = 0x06,   /* RESET command received in invalid state */
+    MDB_ERROR_UNEXPECTED_ACK_WORD = 0x07,     /* Unexpected word received while waiting for ACK */
+    MDB_ERROR_BALANCE_EXCEEDS_MAXIMUM = 0x08, /* Balance exceeds Max_balance limit */
+    SYSTASK_ERROR_TASK_CREATION_FAILED = 0x09,    /* FreeRTOS task creation failed */
+    SYSTASK_ERROR_QUEUE_CREATION_FAILED = 0x0A,   /* FreeRTOS queue creation failed */
+    MAX_ERROR_CODE_NUMBER
  }Error_code_t;
 /******************************************************************************
  *                          Private Variables                                 *
@@ -107,6 +79,12 @@ typedef struct {
     uint32_t timestamp;             /* Timestamp when error occurred */
 } Error_Info_t;
 
+typedef struct{
+    Error_code_t error_code;
+    uint8_t error_count;
+    uint8_t error_threshold;
+}Critical_Error_logger_t;
+
 typedef struct {
     Error_Info_t error_logs[ERROR_LOGS_BUFFER_SIZE];
     uint8_t head;                  /* Write pointer */
@@ -128,11 +106,11 @@ void SYS_ClearErrorLog(void);
 
 /* Debug and Information Functions */
 void SYS_LogInfo(const char* format, ...);
-const char* SYS_GetErrorString(Error_code_t error_code);
+
 
 /* Logger System Functions */
 void SYS_InitLogger(void);
-void SYS_PrintErrorReport(void);
+
 
 /******************************************************************************
  *                            Public Macros                                   *

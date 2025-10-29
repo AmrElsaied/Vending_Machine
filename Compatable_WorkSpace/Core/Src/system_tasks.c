@@ -19,6 +19,7 @@
 #include "queue.h"
 #include "ESP8266_Handler.h"
 #include <string.h>
+#include "SYS_Logger.h"
 /******************************************************************************
  *                             Module Config                                  *
  ******************************************************************************/
@@ -66,7 +67,7 @@ void System_TaskCreate(void)
     espPublishQueue = xQueueCreate(ESP_PUBLISH_QUEUE_SIZE, sizeof(ESP_PublishRequest_t));
     if (espPublishQueue == NULL) {
         /* Queue creation failed - handle error */
-        return;
+        ESP_LOG_CRITICAL_ERROR(SYSTASK_ERROR_QUEUE_CREATION_FAILED, NO_DATA_PRESENT, NO_CONTEXT_PRESENT);
     }
     /* Stack size is in WORDS (not bytes) for xTaskCreate.     */
 
@@ -78,6 +79,11 @@ void System_TaskCreate(void)
         configMAX_PRIORITIES-3,  									/* priority (just below max)       */
         &mdbRxTaskHandle);         									/* return handle                   */
 
+    if(mdbRxTaskHandle == NULL) {
+        /* Task creation failed - handle error */
+        ESP_LOG_CRITICAL_ERROR(SYSTASK_ERROR_TASK_CREATION_FAILED, configMAX_PRIORITIES-3, NO_CONTEXT_PRESENT);
+    }
+
     xTaskCreate(
         mdbCMDProcessTask,                 							/* task function                   */
         "mdbCMDProcessTask",               							/* name (for trace)                */
@@ -86,13 +92,24 @@ void System_TaskCreate(void)
         configMAX_PRIORITIES-2,  									/* priority (just below max)       */
         &mdbCMDProcessTaskHandle);         							/* return handle                   */
 
+    if(mdbCMDProcessTaskHandle == NULL) {
+        /* Task creation failed - handle error */
+        ESP_LOG_CRITICAL_ERROR(SYSTASK_ERROR_TASK_CREATION_FAILED, configMAX_PRIORITIES-2, NO_CONTEXT_PRESENT);
+    }
+
     xTaskCreate(
         espCommunicationTask,
         "espCommunicationTask",
-        512,                                                       /* Increased stack for combined functionality */
+        600,                                                       /* Increased stack for combined functionality */
         NULL,
         configMAX_PRIORITIES-4,
         &espCommunicationTaskHandle);       				        /* return handle                   */
+        
+    if(espCommunicationTaskHandle == NULL) {
+        /* Task creation failed - handle error */
+        ESP_LOG_CRITICAL_ERROR(SYSTASK_ERROR_TASK_CREATION_FAILED, configMAX_PRIORITIES-4, NO_CONTEXT_PRESENT);
+
+    }
 }
 
 /**

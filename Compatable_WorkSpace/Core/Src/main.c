@@ -26,6 +26,7 @@
 #include "MDB_Handler.h"
 #include "system_tasks.h"
 #include "ESP8266_Handler.h"
+#include "SYS_Logger.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -144,6 +145,7 @@ int main(void)
   MX_USART2_UART_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
+  SYS_InitLogger();   /* Initialize system logger */
   ESP_Init();         /* Initialize ESP8266 module */
   MDB_BusInit();      /* Initialize MDB bus */
   /* USER CODE END 2 */

@@ -45,47 +45,19 @@ typedef struct {
  *                          Private Variables                                 *
  ******************************************************************************/
 static Error_Logger_t Error_Logger = {.head = 0, .count = 0, .total_errors = 0};
-static uint32_t critical_error_count = 0;
 static bool logger_initialized = false;
-
-/* Error code to string mapping table */
-static const Error_String_Map_t error_string_map[] = {
-    /* General Errors */
-    {MDB_ERROR_NONE, "No Error"},
-    
-    /* Communication Errors (0x10-0x1F) */
-    {MDB_ERROR_UART_NOT_CONFIGURED, "UART Not Configured"},
-    
-    /* Command Processing Errors (0x30-0x3F) */
-    {MDB_ERROR_SUB_COMMAND_NOT_RECOGNIZED, "Subcommand Not Recognized"},
-    {MDB_ERROR_INVALID_COMMAND_STRUCTURE, "Invalid Command Structure"},
-    {MDB_ERROR_COMMAND_LENGTH_MISMATCH, "Command Length Mismatch"},
-    {MDB_ERROR_INCOMPLETE_COMMAND, "Incomplete Command"},
-    
-    /* State Management Errors (0x40-0x4F) */
-    {MDB_ERROR_INVALID_RX_STATE, "Invalid RX State"},
-    {MDB_ERROR_INVALID_PROCESS_STATE, "Invalid Process State"},
-    {MDB_ERROR_COMMAND_NOT_VALID_IN_STATE, "Command Not Valid In State"},
-    {MDB_ERROR_INVALID_STATE_FOR_RESET, "Invalid State For Reset"},
-    
-    /* ACKnowledgment Errors (0x50-0x5F) */
-    {MDB_ERROR_UNEXPECTED_ACK_WORD, "Unexpected ACK Word"},
-    {MDB_ERROR_ACK_TIMEOUT, "ACK Timeout"},
-    
-    /* Balance and Transaction Errors (0x60-0x6F) */
-    {MDB_ERROR_BALANCE_EXCEEDS_MAXIMUM, "Balance Exceeds Maximum"},
-    
-    /* Vending Operation Errors (0x70-0x7F) */
-    {MDB_ERROR_VENDING_OPERATION_FAILED, "Vending Operation Failed"},
-    
-    /* Configuration and Initialization Errors (0x80-0x8F) */
-    {MDB_ERROR_INITIALIZATION_FAILED, "Initialization Failed"},
-    {MDB_ERROR_CONFIG_INVALID, "Config Invalid"},
-    
-    /* System and Resource Errors (0x90-0x9F) */
-    {MDB_ERROR_RESOURCE_BUSY, "Resource Busy"}
+Critical_Error_logger_t Critical_Error_Logger[MAX_ERROR_CODE_NUMBER] = {
+    {MDB_ERROR_UART_NOT_CONFIGURED, 0, 3},
+    {MDB_ERROR_SUB_COMMAND_NOT_RECOGNIZED, 0, 3},
+    {MDB_ERROR_INVALID_RX_STATE, 0, 3},
+    {MDB_ERROR_INVALID_PROCESS_STATE, 0, 3},
+    {MDB_ERROR_COMMAND_NOT_VALID_IN_STATE, 0, 3},
+    {MDB_ERROR_INVALID_STATE_FOR_RESET, 0, 3},
+    {MDB_ERROR_UNEXPECTED_ACK_WORD, 0, 3},
+    {MDB_ERROR_BALANCE_EXCEEDS_MAXIMUM, 0, 3},
+    {SYSTASK_ERROR_TASK_CREATION_FAILED, 0, 1},
+    {SYSTASK_ERROR_QUEUE_CREATION_FAILED, 0, 1}
 };
-
 /******************************************************************************
  *                         Private Prototypes                                 *
  ******************************************************************************/
@@ -93,7 +65,6 @@ static void SYS_WriteErrorToLog(Error_code_t error_code, uint16_t error_data, ui
 static uint32_t SYS_GetTimestamp(void);
 static uint8_t SYS_GetCurrentState(void);
 static void SYS_HandleCriticalErrorAction(Error_code_t error_code);
-static const char* SYS_LookupErrorString(Error_code_t error_code);
 static HAL_StatusTypeDef SYS_TransmitUART(const char* message);
 
 /******************************************************************************
@@ -124,9 +95,6 @@ void SYS_InitLogger(void) {
     Error_Logger.head = 0;
     Error_Logger.count = 0;
     Error_Logger.total_errors = 0;
-    
-    // Reset critical error count
-    critical_error_count = 0;
     
     // Mark logger as initialized
     logger_initialized = true;
@@ -184,15 +152,14 @@ void SYS_LogCriticalError(Error_code_t error_code, uint16_t error_data, uint8_t 
     // Log the error normally
     SYS_WriteErrorToLog(error_code, error_data, command_context);
     
-    // Increment critical error count
-    critical_error_count++;
+    // increment the error count for this critical error
+    Critical_Error_Logger[error_code].error_count++;
     
-    // Handle critical error actions
-    SYS_HandleCriticalErrorAction(error_code);
     
     // Check if critical error threshold exceeded
-    if (critical_error_count >= CRITICAL_ERROR_RESET_THRESHOLD) {
-        // Could trigger system reset or safe mode here
+    if (Critical_Error_Logger[error_code].error_count >= Critical_Error_Logger[error_code].error_threshold) {
+        // Handle critical error actions
+        SYS_HandleCriticalErrorAction(error_code);
     }
 }
 
@@ -248,7 +215,6 @@ void SYS_ClearErrorLog(void) {
     Error_Logger.head = 0;
     Error_Logger.count = 0;
     Error_Logger.total_errors = 0;
-    critical_error_count = 0;
 }
 
 
@@ -289,60 +255,6 @@ void SYS_LogInfo(const char* format, ...) {
         // Transmit via UART
         SYS_TransmitUART(buffer);
     }
-}
-
-/**
- * @brief Get human-readable error string
- * 
- * @details Returns a descriptive string for the given error code. This function
- *          provides user-friendly error descriptions for display, logging, or
- *          debugging purposes.
- *
- * @param error_code Error code to look up
- * @return Pointer to error description string, or "Unknown Error" if not found
- *
- * @note The returned string is stored in program memory and should not be modified.
- */
-const char* SYS_GetErrorString(Error_code_t error_code) {
-    return SYS_LookupErrorString(error_code);
-}
-
-/**
- * @brief Print comprehensive error report
- * 
- * @details Outputs a detailed report of all errors currently in the log buffer,
- *          including timestamps, error codes, and context information. This
- *          function is useful for system diagnostics and error analysis.
- *
- * @note The report is output through the debug interface and may be lengthy
- *       if many errors are logged.
- */
-void SYS_PrintErrorReport(void) {
-    if (!logger_initialized) {
-        return;
-    }
-    
-    SYS_LogInfo("=== ERROR REPORT ===");
-    SYS_LogInfo("Total Errors: %lu", Error_Logger.total_errors);
-    SYS_LogInfo("Critical Errors: %lu", critical_error_count);
-    SYS_LogInfo("Buffer Status: %d/%d", Error_Logger.count, ERROR_LOGS_BUFFER_SIZE);
-    
-    if (Error_Logger.count == 0) {
-        SYS_LogInfo("No errors logged");
-        return;
-    }
-    
-    SYS_LogInfo("Recent Errors:");
-    for (uint8_t i = 0; i < Error_Logger.count; i++) {
-        Error_Info_t error_info;
-        if (SYS_GetErrorByIndex(i, &error_info)) {
-            SYS_LogInfo("[%d] Code: 0x%02X (%s), Data: 0x%04X, Time: %lu, State: %d, Cmd: %d",
-                       i, error_info.error_code, SYS_GetErrorString(error_info.error_code),
-                       error_info.error_data, error_info.timestamp,
-                       error_info.state_context, error_info.command_context);
-        }
-    }
-    SYS_LogInfo("=== END REPORT ===");
 }
 
 /******************************************************************************
@@ -427,6 +339,12 @@ static uint8_t SYS_GetCurrentState(void) {
 static void SYS_HandleCriticalErrorAction(Error_code_t error_code) {
     // Handle specific critical error actions
     switch (error_code) {
+        case SYSTASK_ERROR_TASK_CREATION_FAILED:
+            while(1); // Halt system
+            break;
+        case SYSTASK_ERROR_QUEUE_CREATION_FAILED:
+            while(1); // Halt system
+            break;
         default:
             // General critical error handling
             break;
@@ -437,22 +355,4 @@ static void SYS_HandleCriticalErrorAction(Error_code_t error_code) {
     // - System state changes
     // - Emergency shutdowns
     // - Watchdog resets
-}
-
-/**
- * @brief Look up error string from error code
- * 
- * @param error_code Error code to look up
- * @return Pointer to error description string
- */
-static const char* SYS_LookupErrorString(Error_code_t error_code) {
-    // Search through error string mapping table
-    for (size_t i = 0; i < (sizeof(error_string_map) / sizeof(error_string_map[0])); i++) {
-        if (error_string_map[i].error_code == error_code) {
-            return error_string_map[i].error_string;
-        }
-    }
-    
-    // Return default string if not found
-    return "Unknown Error";
 }

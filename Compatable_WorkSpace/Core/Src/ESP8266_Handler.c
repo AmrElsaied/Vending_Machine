@@ -42,6 +42,7 @@ uint8_t esp_binary_rx_buffer[ESP_UART_RX_BUFFER_SIZE];  // dedicated binary resp
 uint8_t esp_uart_callback_buffer[ESP_UART_RX_BUFFER_SIZE];
 volatile char esp_line_buffer[MAX_LINE_BUFFER_SIZE];
 volatile uint16_t esp_expected_len = 0;
+static uint16_t current_mqtt_msg_id = 0;
 
 char g_mqtt_topic[MAX_TOPIC_BUFFER_SIZE];
 char g_mqtt_message[MAX_MESSAGE_BUFFER_SIZE];
@@ -167,6 +168,10 @@ void ESP_Init(void)
 
 
 	ESP_Subscribe(&(esp_config.mqtt_topic), 1);
+	HAL_Delay(3000);
+	ESP_Subscribe("stm32/sub1", 1);
+	HAL_Delay(3000);
+	ESP_Subscribe("stm32/sub2", 1);
 }
 
 
@@ -514,69 +519,106 @@ void ESP_Publish(const char *topic, const char *message, uint8_t qos)
  */
 HAL_StatusTypeDef ESP_Subscribe(const char *topic, uint8_t qos)
 {
+    // --- 1. Input Validation ---
 	if (esp_config.esp_uart == NULL || topic == NULL) {
 		//esp_debug_print("[ESP] Invalid parameters for SUBSCRIBE\r\n");
 		return HAL_ERROR;
 	}
 
-	// Calculate packet size
 	uint16_t topic_len = strlen(topic);
 	if (topic_len == 0) {
 		//esp_debug_print("[ESP] Empty topic for SUBSCRIBE\r\n");
 		return HAL_ERROR;
 	}
 
-	uint16_t remaining_length = 2 + 2 + topic_len + 1;  // Msg ID (2) + topic len (2) + topic + QoS (1)
+    // --- 2. Generate Unique Message ID (The Primary Fix) ---
+    // QoS 1 and 2 require a unique message ID (non-zero).
+    current_mqtt_msg_id++;
+    if (current_mqtt_msg_id == 0) {
+        current_mqtt_msg_id = 1; // Ensure ID is never 0 (reserved/invalid)
+    }
+    uint16_t message_id = current_mqtt_msg_id;
 
-	// Check if packet fits in buffer
-	if (remaining_length > 250) {  // Leave some room for fixed header
+    // --- 3. Calculate Remaining Length ---
+    // Remaining Length = Msg ID (2) + Topic Length Field (2) + Topic String (topic_len) + QoS Byte (1)
+	uint16_t remaining_length = 2 + 2 + topic_len + 1;
+
+	// Check if packet fits in buffer (Fixed Header size is 2 bytes for single-byte RL)
+	if (remaining_length + 2 > 256) {
 		//esp_debug_print("[ESP] Topic too long for SUBSCRIBE\r\n");
 		return HAL_ERROR;
 	}
 
-	// Build SUBSCRIBE packet
+    // NOTE: This assumes remaining_length < 128 (single byte encoding), which is safe for one topic.
+
+	// --- 4. Build SUBSCRIBE Packet ---
 	uint8_t packet[256];
 	uint16_t index = 0;
 
-	// Fixed header (SUBSCRIBE = 0x82)
-	packet[index++] = 0x82;
-	packet[index++] = remaining_length;
+	// Fixed header (SUBSCRIBE = 0x82 for QoS 1, or 0x80 for QoS 0)
+    // The top 4 bits are 1000 (SUBSCRIBE). The bottom 4 are flags (e.g., QoS).
+    // The control type is 0x80 (SUBSCRIBE) ORed with the flags.
+	packet[index++] = 0x82; // Assuming QoS 1 is intended here (0x80 | 0x02)
+	packet[index++] = (uint8_t)remaining_length; // Remaining Length
 
-	// Variable header
-	packet[index++] = 0x00;  // Message ID MSB
-	packet[index++] = 0x01;  // Message ID LSB
+    // Variable header (UNIQUE MESSAGE ID)
+	packet[index++] = (message_id >> 8) & 0xFF;  // Message ID MSB
+	packet[index++] = message_id & 0xFF;         // Message ID LSB
 
-	// Payload
+    // Payload (List of Subscriptions)
 	packet[index++] = (topic_len >> 8) & 0xFF;  // Topic length MSB
 	packet[index++] = topic_len & 0xFF;         // Topic length LSB
+
+	// Topic String
 	memcpy(&packet[index], topic, topic_len);
 	index += topic_len;
+
+    // Requested QoS
 	packet[index++] = qos;
 
-	// Send AT command to initiate data transfer
+    // --- 5. Send AT Command to Initiate Data Transfer ---
 	char cipsendCmd[32];
 	snprintf(cipsendCmd, sizeof(cipsendCmd), "AT+CIPSEND=%d", index);
 
 	HAL_StatusTypeDef ret = ESP_SendAT(cipsendCmd, ">", 2000);
 	if (ret != HAL_OK) {
-		char dbg[64];
-		snprintf(dbg, sizeof(dbg), "[ESP] Failed to initiate SUBSCRIBE send: %d\r\n", ret);
-		//esp_debug_print(dbg);
+		// ... [error handling] ...
 		return ret;
 	}
 
-	// Send binary packet and wait for "SEND OK" (or other expected response)
+    // --- 6. Send Binary Data ---
 	ret = ESP_SendBinary(packet, index, "SEND OK", 5000);
 
+    // --- 7. Check Status and Handle Acknowledgment (CRITICAL) ---
 	if (ret == HAL_OK) {
+
+        // ***************************************************************
+        // CRITICAL SECTION: SUBACK WAITING AND STATE CLEARING
+        // This is the most likely reason for the second packet failing.
+        // ***************************************************************
+
+        // 1. Wait for SUBACK: The broker sends this packet (0x90) with the matching Message ID.
+        // If you don't read this response, the ESP module's buffer may overflow
+        // or its state machine will be confused, leading to a "malformed packet"
+        // error when you send the next CIPSEND command.
+
+        // Placeholder for your implementation:
+        // ret = ESP_WaitForSUBACK(message_id, 5000);
+
+        // 2. State Clearance Delay: Give the ESP module a small, fixed delay
+        // to complete its internal processing of the received SUBACK packet.
+        HAL_Delay(500); // 500ms is a safe buffer
+
 		char success_msg[128];
-		snprintf(success_msg, sizeof(success_msg), "[ESP] SUBSCRIBE successful to topic: %s (QoS: %d)\r\n",
-				topic, qos);
+		snprintf(success_msg, sizeof(success_msg), "[ESP] SUBSCRIBE sent for topic: %s (ID: %d). State cleared.\r\n",
+				topic, message_id);
 		//esp_debug_print(success_msg);
-		ESP_StartUARTReceive();
+		//ESP_StartUARTReceive(); // Re-enable general receive if necessary
+
+        // If you implement ESP_WaitForSUBACK, return its result here.
 	} else {
 		char error_msg[128];
-		snprintf(error_msg, sizeof(error_msg), "[ESP] SUBSCRIBE failed to topic: %s (error: %d)\r\n",
+		snprintf(error_msg, sizeof(error_msg), "[ESP] SUBSCRIBE send failed to topic: %s (error: %d)\r\n",
 				topic, ret);
 		//esp_debug_print(error_msg);
 	}
@@ -863,6 +905,7 @@ static HAL_StatusTypeDef esp_setup_wifi_connection(void)
 static HAL_StatusTypeDef esp_setup_tcp_connection(void)
 {
 	char tcp_connect_cmd[64];
+	char cipdomain_cmd[64];
 
 	//    if (ESP_SendAT("AT+CIPMODE=1", "OK", 2000) != HAL_OK) {
 	//               //esp_debug_print("[ESP] Failed to enable transparent mode\r\n");
@@ -872,6 +915,13 @@ static HAL_StatusTypeDef esp_setup_tcp_connection(void)
 	if (ESP_SendAT("AT+CIPMUX=0", "OK", 2000) != HAL_OK) {
 		return HAL_ERROR;
 	}
+
+	snprintf(cipdomain_cmd, sizeof(cipdomain_cmd),
+	             "AT+CIPDOMAIN=\"%s\"", esp_config.mqtt_broker_ip);
+
+	if (ESP_SendAT(cipdomain_cmd, "OK",  5000) != HAL_OK) {
+			return HAL_ERROR;
+		}
 
 	snprintf(tcp_connect_cmd, sizeof(tcp_connect_cmd),
 			"AT+CIPSTART=\"TCP\",\"%s\",%d",
