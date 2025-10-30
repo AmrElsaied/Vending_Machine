@@ -1074,6 +1074,13 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
                 {
                     // Enough balance to vend
                     MDB_StateManager.Cashless_StateHandler = STATE_APPROVE_VEND_REQ;
+                    // Prepare item data string for publishing
+                    char itemDataStr[32];  // Local variable to hold formatted data string
+                    snprintf(itemDataStr, sizeof(itemDataStr), "U:%d,ID:%d%d", 
+                             Vending_Item_Data.Res_Item_Price_Lbyte, 
+                             Vending_Item_Data.Req_Item_ID_Hbyte, 
+                             Vending_Item_Data.Req_Item_ID_Lbyte);
+                    ESP_RequestPublish("stm32/ItemData",itemDataStr,1);
                 }
                 break;
             case 0x00BF:
@@ -1102,6 +1109,7 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
                 // Transition to session idle state
                 MDB_StateManager.Cashless_StateHandler = STATE_SESSION_IDLE;
                 Internal_VendReq_Change(VEND_REQ_STATE_DISABLE);
+                ESP_RequestPublish("stm32/Vend","Done",1);
                 break;
             default:
                 // No other sub-commands valid in this state
@@ -1140,9 +1148,6 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
     if (VMC_CMDs[cmd_index].CMD_Response_Length > 0) {
         MDB_SendResponseWithModeBit(VMC_CMDs[cmd_index].CMD_Response,
                                     VMC_CMDs[cmd_index].CMD_Response_Length);
-        }
-        if (0x017F == RxBuffer[1]){
-            ESP_RequestPublish("stm32/Vend","Done",1);
         }
 }
 /**
