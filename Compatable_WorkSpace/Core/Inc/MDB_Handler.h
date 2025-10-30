@@ -124,13 +124,20 @@ typedef struct {
     uint32_t bus_timeout;                  /* MDB bus timeout in milliseconds */
     bool debug_enabled;                    /* Enable/disable debug output */
 } MDB_Config_t;
+
+typedef enum {
+    VEND_REQ_STATE_IDLE = 0,
+    VEND_REQ_STATE_ENABLE,
+    VEND_REQ_STATE_DISABLE
+} vend_req_state_t;
 /******************************************************************************
  *                     Global Variables (extern)                              *
  ******************************************************************************/
 /* Note: UART handles are now configured via mdb_config variable */
-extern MDB_Config_t mdb_config;                 /* MDB configuration structure */
-extern MDB_StateManager_t MDB_StateManager;     /* State manager for MDB protocol */
-extern MDB_BusManager_t MDB_BusManager;         /* Bus manager for MDB protocol */
+extern MDB_Config_t mdb_config;                         /* MDB configuration structure */
+extern MDB_StateManager_t MDB_StateManager;             /* State manager for MDB protocol */
+extern MDB_BusManager_t MDB_BusManager;                 /* Bus manager for MDB protocol */
+extern vend_req_state_t vend_request_current_state;     /* Current vend request state */
 /******************************************************************************
  *                              Public API                                    *
  ******************************************************************************/
@@ -342,6 +349,19 @@ void MDB_UART_RxCallback(UART_HandleTypeDef *huart);
  * @note Call this function after MDB configuration to start receiving data
  */
 void MDB_StartUARTReceive(void);
+
+/**
+ * @brief Get the current vend request state
+ * @return Current vend request state
+ */
+vend_req_state_t GetVendReq_State(void);
+
+
+/**
+ * @brief Set the current vend request state
+ * @param state New vend request state
+ */
+void SetVendReq_State(vend_req_state_t state);
 
 #endif /* MDB_HANDLER_H_ */
 

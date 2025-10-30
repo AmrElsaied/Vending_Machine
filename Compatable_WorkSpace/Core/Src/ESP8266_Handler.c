@@ -18,7 +18,7 @@
 #include "ESP8266_Handler.h"
 #include <string.h>
 #include <stdio.h>
-
+#include "MDB_Handler.h"
 
 
 /******************************************************************************
@@ -54,7 +54,7 @@ static volatile uint16_t esp_uart_rx_index = 0;
 
 static char esp_response_buffer[ESP_RESPONSE_BUFFER_SIZE];
 static ESP_Status_t esp_current_status = ESP_STATUS_UNINITIALIZED;
-esp_buffer_state esp_buffer_current_state = ESP_BUFFER_CHECK_NOK;
+vend_req_state_t esp_vend_current_state = VEND_REQ_STATE_IDLE;
 
 ESP_Config_t esp_config = {
 		.wifi_ssid = ESP_DEFAULT_SSID,
@@ -1037,27 +1037,21 @@ void PingREQ(void){
 }
 
 
-esp_buffer_state GetBuffer_State(void){
+void CheckVendReq_State(void){
 	if(g_mqtt_message[0] == 'O' && g_mqtt_message[1] == 'K'){
-		esp_buffer_current_state = ESP_BUFFER_CHECK_START;
+		SetVendReq_State(VEND_REQ_STATE_ENABLE);
 	}
 	else if(g_mqtt_message[0] == 'N' && g_mqtt_message[1] == 'K'){
-		esp_buffer_current_state = ESP_BUFFER_CHECK_STOP;
+		SetVendReq_State(VEND_REQ_STATE_DISABLE);
 	}
 	else
 	{
-		esp_buffer_current_state = ESP_BUFFER_CHECK_NOK;
+		SetVendReq_State(VEND_REQ_STATE_IDLE);
 	}
-	return esp_buffer_current_state;
+	ResetMessageBuffer();
 }
 
-void ResetBuffer_State(void) {
-
-	if(esp_buffer_current_state ==  ESP_BUFFER_CHECK_START){
-
-		memset(g_mqtt_message, 0, MAX_MESSAGE_BUFFER_SIZE);
-		memset(g_mqtt_topic, 0, MAX_MESSAGE_BUFFER_SIZE);
-
-		esp_buffer_current_state = ESP_BUFFER_CHECK_NOK;
-	}
+void ResetMessageBuffer(void) {
+	memset(g_mqtt_message, 0, MAX_MESSAGE_BUFFER_SIZE);
+	memset(g_mqtt_topic, 0, MAX_MESSAGE_BUFFER_SIZE);
 }

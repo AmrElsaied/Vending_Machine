@@ -91,6 +91,7 @@ typedef enum {
 	ESP_BUFFER_CHECK_NOK
 } esp_buffer_state;
 
+
 /**
  * @brief ESP publish request structure
  */
@@ -133,7 +134,6 @@ extern volatile bool payload_ready;
 extern char g_mqtt_topic[MAX_TOPIC_BUFFER_SIZE];
 extern char g_mqtt_message[MAX_MESSAGE_BUFFER_SIZE];
 extern esp_buffer_state esp_buffer_current_state;
-
 /******************************************************************************
  *                        Function Declarations                               *
  ******************************************************************************/
@@ -209,11 +209,19 @@ void ESP_UART_RxCallback(UART_HandleTypeDef *huart);
 void ESP_StartUARTReceive(void);
 
 
-
+/**
+ * @brief Send periodic MQTT PINGREQ to keep connection alive
+ */
 void PingREQ(void);
 
-esp_buffer_state GetBuffer_State(void);
 
-void ResetBuffer_State(void);
+/**
+ * @brief Check and update the vend request state based on received message
+ */
+void CheckVendReq_State(void);
 
+/**
+ * @brief Reset the vend request state and clear buffers
+ */
+void ResetMessageBuffer(void);
 #endif /* ESP8266_HANDLER_H_ */

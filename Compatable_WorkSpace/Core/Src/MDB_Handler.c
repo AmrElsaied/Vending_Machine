@@ -62,7 +62,7 @@ static void MDB_CompleteCommandReception(uint8_t cmd_index);
 static void MDB_RequestAck(uint8_t skip_count, Peripheral_State_t req_state);
 static void MDB_UpdateVendingItemData(uint16_t *RxBuffer);
 static void Set_CurBalance(uint8_t new_balance);
-
+static void Internal_VendReq_Change(vend_req_state_t state);
 /******************************************************************************
  *                           Public Variables                                 *
  ******************************************************************************/
@@ -99,7 +99,8 @@ const CommandEntry_t command_table[] = {
 
 Vending_Item_Data_t Vending_Item_Data;
 Peripheral_balance_t Peripheral_Balance = {244, 0, 244};
-bool Vending_EN = false;
+bool Internal_VendReq_Change_flag = false;
+vend_req_state_t vend_request_current_state = VEND_REQ_STATE_IDLE; /* Current vend request state */
 /******************************************************************************
  *                          Public Functions                                  *
  ******************************************************************************/
@@ -270,6 +271,48 @@ void MDB_SendResponseWithModeBit(uint16_t *data, uint8_t dataLength)
         ESP_LOG_ERROR(MDB_ERROR_UART_NOT_CONFIGURED,NO_DATA_PRESENT,NO_CONTEXT_PRESENT);
     }
 }
+
+void SetVendReq_State(vend_req_state_t state){
+	vend_request_current_state = state;
+}
+
+vend_req_state_t GetVendReq_State(void){
+	return vend_request_current_state;
+}
+
+
+/**
+ * @brief UART receive complete callback for MDB communication
+ * @param huart UART handle that triggered the callback
+ * @note This function should be called from HAL_UART_RxCpltCallback
+ */
+void MDB_UART_RxCallback(UART_HandleTypeDef *huart) {
+    uint16_t word = mdb_rx_buf[0] & 0x1FF;
+    /* ---- 2. Store in ring buffer (overflow returns false) --------- */
+    (void)mdbRing_push(&rxRing, word); /* ignore overflow for now   */
+
+    /* ---- 3. Notify mdbTask that data is ready --------------------- */
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    vTaskNotifyGiveFromISR(mdbRxTaskHandle, &xHigherPriorityTaskWoken);
+
+    /* ---- 4. Context‑switch immediately if mdbTask has higher prio  */
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+
+    /* ---- 5. Re‑arm reception of the NEXT byte --------------------- */
+    HAL_UART_Receive_IT(mdb_config.mdb_uart, (uint8_t *)mdb_rx_buf, 1);
+}
+
+/**
+ * @brief Start UART receive interrupt for MDB communication
+ * @note Call this function after MDB configuration to start receiving data
+ */
+void MDB_StartUARTReceive(void) {
+    if (mdb_config.mdb_uart != NULL) {
+        // Start UART receive with interrupt for single byte
+        HAL_UART_Receive_IT(mdb_config.mdb_uart, (uint8_t *)mdb_rx_buf, 1);
+    }
+}
+
 
 /******************************************************************************
  *                          Private Functions                                 *
@@ -606,24 +649,29 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
     // {
     //     Vending_EN = false;
     // }
-
-    if (GetBuffer_State() == ESP_BUFFER_CHECK_START && Vending_EN == false && MDB_StateManager.Cashless_StateHandler == STATE_ENABLED)
+    if(Internal_VendReq_Change_flag == false)
+    {
+        CheckVendReq_State();
+    }
+    else
+    {
+        Internal_VendReq_Change_flag = false;
+    }
+    
+    if (GetVendReq_State() ==  VEND_REQ_STATE_ENABLE
+        && MDB_StateManager.Cashless_StateHandler == STATE_ENABLED)
     {
         MDB_StateManager.Cashless_StateHandler = STATE_START_SESSION;
         Set_CurBalance(135);
-        Vending_EN = true;
-        ResetBuffer_State();
     }
-    else if (GetBuffer_State() == ESP_BUFFER_CHECK_STOP && Vending_EN == true && MDB_StateManager.Cashless_StateHandler == STATE_SESSION_IDLE)
+    else if (GetVendReq_State() == VEND_REQ_STATE_DISABLE
+             && MDB_StateManager.Cashless_StateHandler == STATE_SESSION_IDLE)
     {
         MDB_StateManager.Cashless_StateHandler = STATE_CANCEL_SESSION;
-        Vending_EN = false;
-        ResetBuffer_State();
     }
-    else if (GetBuffer_State() == ESP_BUFFER_CHECK_STOP && Vending_EN == true )
+    else
     {
-        Vending_EN = false;
-        ResetBuffer_State();
+        //Do nothing
     }
     // Verify the command structure is valid
     if (MDB_ValidateCommandStructure(RxBuffer, cmd_length, cmd_index)) {
@@ -1053,6 +1101,7 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response_Length = 1;
                 // Transition to session idle state
                 MDB_StateManager.Cashless_StateHandler = STATE_SESSION_IDLE;
+                Internal_VendReq_Change(VEND_REQ_STATE_DISABLE);
                 break;
             default:
                 // No other sub-commands valid in this state
@@ -1096,38 +1145,27 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
             ESP_RequestPublish("stm32/Vend","Done",1);
         }
 }
-
+/**
+ * @brief Internal function to change the vending request state
+ * 
+ * @details This function sets a flag indicating that the vending request state
+ *          has changed and updates the current vending request state to the
+ *          specified value. It is used internally to manage transitions between
+ *          different vending request states.
+ *
+ * @param state The new vending request state to set
+ *
+ * @note This function sets the Internal_VendReq_Change_flag to true, indicating
+ *       that a change has occurred. It then calls SetVendReq_State() to update
+ *       the current vending request state.
+ *
+ * @warning This function is intended for internal use only and should not be
+ *          called directly from outside the module.
+ */
+static void Internal_VendReq_Change(vend_req_state_t state){
+    Internal_VendReq_Change_flag = true;
+    SetVendReq_State(state);
+}
 /*************************** Private Functions *******************************/
 
-/**
- * @brief UART receive complete callback for MDB communication
- * @param huart UART handle that triggered the callback
- * @note This function should be called from HAL_UART_RxCpltCallback
- */
-void MDB_UART_RxCallback(UART_HandleTypeDef *huart) {
-    uint16_t word = mdb_rx_buf[0] & 0x1FF;
-    /* ---- 2. Store in ring buffer (overflow returns false) --------- */
-    (void)mdbRing_push(&rxRing, word); /* ignore overflow for now   */
-
-    /* ---- 3. Notify mdbTask that data is ready --------------------- */
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    vTaskNotifyGiveFromISR(mdbRxTaskHandle, &xHigherPriorityTaskWoken);
-
-    /* ---- 4. Context‑switch immediately if mdbTask has higher prio  */
-    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
-
-    /* ---- 5. Re‑arm reception of the NEXT byte --------------------- */
-    HAL_UART_Receive_IT(mdb_config.mdb_uart, (uint8_t *)mdb_rx_buf, 1);
-}
-
-/**
- * @brief Start UART receive interrupt for MDB communication
- * @note Call this function after MDB configuration to start receiving data
- */
-void MDB_StartUARTReceive(void) {
-    if (mdb_config.mdb_uart != NULL) {
-        // Start UART receive with interrupt for single byte
-        HAL_UART_Receive_IT(mdb_config.mdb_uart, (uint8_t *)mdb_rx_buf, 1);
-    }
-}
 
