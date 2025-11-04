@@ -38,6 +38,7 @@
 extern TaskHandle_t mdbRxTaskHandle ;           /* Handle for MDB receive task */ 
 extern TaskHandle_t mdbCMDProcessTaskHandle ;   /* Handle for MDB command processing task */
 extern mdb_ring_t rxRing;                       /* Ring buffer for MDB received data */
+extern TaskHandle_t espMqttProcessTaskHandle;    /* Handle for ESP MQTT message processing task */
 /******************************************************************************
  *                        Function Declarations                               *
  ******************************************************************************/

@@ -649,25 +649,19 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
     // {
     //     Vending_EN = false;
     // }
-    if(Internal_VendReq_Change_flag == false)
-    {
-        CheckVendReq_State();
-    }
-    else
-    {
-        Internal_VendReq_Change_flag = false;
-    }
     
     if (GetVendReq_State() ==  VEND_REQ_STATE_ENABLE
         && MDB_StateManager.Cashless_StateHandler == STATE_ENABLED)
     {
         MDB_StateManager.Cashless_StateHandler = STATE_START_SESSION;
         Set_CurBalance(135);
+        SetVendReq_State(VEND_REQ_STATE_IDLE);
     }
     else if (GetVendReq_State() == VEND_REQ_STATE_DISABLE
              && MDB_StateManager.Cashless_StateHandler == STATE_SESSION_IDLE)
     {
         MDB_StateManager.Cashless_StateHandler = STATE_CANCEL_SESSION;
+        SetVendReq_State(VEND_REQ_STATE_IDLE);
     }
     else
     {
@@ -1080,7 +1074,7 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
                              Vending_Item_Data.Res_Item_Price_Lbyte, 
                              Vending_Item_Data.Req_Item_ID_Hbyte, 
                              Vending_Item_Data.Req_Item_ID_Lbyte);
-                    ESP_RequestPublish("stm32/ItemData",itemDataStr,1);
+                    ESP_RequestPublish(topic_handlers[ESP_TOPIC_VEND_REQUEST].topic_pattern, itemDataStr, 1);
                 }
                 break;
             case 0x00BF:
@@ -1109,7 +1103,7 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
                 // Transition to session idle state
                 MDB_StateManager.Cashless_StateHandler = STATE_SESSION_IDLE;
                 Internal_VendReq_Change(VEND_REQ_STATE_DISABLE);
-                ESP_RequestPublish("stm32/Vend","Done",1);
+                ESP_RequestPublish(topic_handlers[ESP_TOPIC_VEND_REQUEST].topic_pattern, "Done", 1);
                 break;
             default:
                 // No other sub-commands valid in this state

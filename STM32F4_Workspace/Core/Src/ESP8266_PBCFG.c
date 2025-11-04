@@ -59,7 +59,6 @@ ESP_Config_t ESP8266_DefaultConfig = {
     .mqtt_broker_ip = ESP_DEFAULT_MQTT_BROKER,
     .mqtt_broker_port = ESP_DEFAULT_MQTT_PORT,
     .mqtt_client_id = ESP_DEFAULT_CLIENT_ID,
-    .mqtt_topic = ESP_DEFAULT_MQTT_TOPIC,
     .esp_uart = &huart2,        /* ESP8266 communication UART */
     .debug_uart = &huart6,      /* Debug output UART */
     .debug_enabled = false       /* Disable debug output by default */

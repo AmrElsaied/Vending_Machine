@@ -19,8 +19,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "MDB_Handler.h"
-
-
+#include "Flash_Driver.h"
 /******************************************************************************
  *                             Module Config                                  *
  ******************************************************************************/
@@ -34,13 +33,28 @@
  ******************************************************************************/
 
 /******************************************************************************
- *                          Private Variables                                 *
+ *                           Public Variables                                 *
  ******************************************************************************/
 
-static volatile uint8_t esp_uart_rx_buffer[ESP_UART_RX_BUFFER_SIZE];
+/******************************************************************************
+ *                         Private Prototypes                                 *
+ ******************************************************************************/
+static void esp_drain_rx_buffer(void);
+static HAL_StatusTypeDef esp_setup_wifi_connection(void);
+static HAL_StatusTypeDef esp_setup_tcp_connection(void);
+static HAL_StatusTypeDef esp_send_mqtt_connect_packet(void);
+static void esp_debug_print(const char *message);
+
+static void handle_vend_request_topic(const char* message);
+static void handle_ping_topic(const char* message);
+static void handle_unknown_topic(const char* message);
+
+
+/******************************************************************************
+ *                          Private Variables                                 *
+ ******************************************************************************/
 uint8_t esp_binary_rx_buffer[ESP_UART_RX_BUFFER_SIZE];  // dedicated binary response buffer
 uint8_t esp_uart_callback_buffer[ESP_UART_RX_BUFFER_SIZE];
-volatile char esp_line_buffer[MAX_LINE_BUFFER_SIZE];
 volatile uint16_t esp_expected_len = 0;
 static uint16_t current_mqtt_msg_id = 0;
 
@@ -62,7 +76,6 @@ ESP_Config_t esp_config = {
 		.mqtt_broker_ip = ESP_DEFAULT_MQTT_BROKER,
 		.mqtt_broker_port = ESP_DEFAULT_MQTT_PORT,
 		.mqtt_client_id = ESP_DEFAULT_CLIENT_ID,
-		.mqtt_topic = ESP_DEFAULT_MQTT_TOPIC,
 		.esp_uart = NULL,          /* Will be set via ESP_SetConfig() */
 		.debug_uart = NULL,         /* Will be set via ESP_SetConfig() */
 		.debug_enabled = false              /* Enable debug output by default */
@@ -72,19 +85,13 @@ ESP_Config_t esp_config = {
 
 static esp_rx_state_t esp_current_state = ESP_STATE_PARSING_HEADER;
 
-/******************************************************************************
- *                           Public Variables                                 *
- ******************************************************************************/
-
-/******************************************************************************
- *                         Private Prototypes                                 *
- ******************************************************************************/
-static void esp_drain_rx_buffer(void);
-static HAL_StatusTypeDef esp_setup_wifi_connection(void);
-static HAL_StatusTypeDef esp_setup_tcp_connection(void);
-static HAL_StatusTypeDef esp_send_mqtt_connect_packet(void);
-static void esp_debug_print(const char *message);
-
+/* Topic handler table - Add new topics here */
+const mqtt_topic_entry_t topic_handlers[] = {
+    {"stm32/vend_request", handle_vend_request_topic, "Vending machine request control"},
+    {"stm32/ping", handle_ping_topic, "System ping/health check"},
+	{"stm32/status", NULL, "Status updates from STM32"},  // No handler, just for publishing
+	{NULL, handle_unknown_topic, "Default handler for unregistered topics"}  /* Default handler */
+};
 /******************************************************************************
  *                          Public Functions                                  *
  ******************************************************************************/
@@ -116,6 +123,13 @@ ESP_Config_t* ESP_GetConfig(void)
  */
 void ESP_Init(void)
 {
+	// LoadWiFiConfig(esp_config.wifi_ssid, esp_config.wifi_password);
+	// // Check if WiFi credentials are unconfigured
+	// if (strcmp(esp_config.wifi_ssid, ESP_DEFAULT_UNCONFIGURED_SSID) == 0 || 
+	// 	strcmp(esp_config.wifi_password, ESP_DEFAULT_UNCONFIGURED_PASSWORD) == 0) {
+	// 	esp_current_status = ESP_STATUS_ERROR;
+	// 	return;
+	// }
 	// Set the configuration with the default configuration
 	ESP_SetConfig(&ESP8266_DefaultConfig);
 
@@ -165,13 +179,11 @@ void ESP_Init(void)
 
 	esp_current_status = ESP_STATUS_MQTT_CONNECTED;
 	//esp_debug_print("[ESP] MQTT Connected Successfully!\r\n");
-
-
-	ESP_Subscribe(&(esp_config.mqtt_topic), 1);
-	HAL_Delay(3000);
-	ESP_Subscribe("stm32/sub1", 1);
-	HAL_Delay(3000);
-	ESP_Subscribe("stm32/sub2", 1);
+	// Subscribe to topics
+	for (int i = 0; i < ESP_TOPIC_MAXNUM; i++) {
+		ESP_Subscribe(topic_handlers[i].topic_pattern, 1);
+		HAL_Delay(2000);
+	}
 }
 
 
@@ -628,16 +640,6 @@ HAL_StatusTypeDef ESP_Subscribe(const char *topic, uint8_t qos)
 /**
  * @brief UART receive complete callback for ESP8266 communication
  * @param huart UART handle that triggered the callback
- * @note This function should be called from HAL_UART_RxCpltCallback
- */
-/**
- * @brief UART receive complete callback for ESP8266 communication
- * @param huart UART handle that triggered the callback
- * @note Collects bytes into esp_uart_rx_buffer, parses +IPD length, and processes full packet
- */
-/**
- * @brief UART receive complete callback for ESP8266 communication
- * @param huart UART handle that triggered the callback
  * @note Collects bytes into esp_uart_rx_buffer, parses +IPD length, and processes full packet
  */
 void ESP_UART_RxCallback(UART_HandleTypeDef *huart)
@@ -714,9 +716,11 @@ void ESP_UART_RxCallback(UART_HandleTypeDef *huart)
 					memcpy(g_mqtt_message, payload_ptr, message_len);
 					g_mqtt_message[message_len] = '\0'; // Null-terminate the global buffer
 
-//					char dbg_line[128];
-//					snprintf(dbg_line, sizeof(dbg_line), "[ESP] Detected Message: %s\r\n", g_mqtt_message);
-					//esp_debug_print(dbg_line);
+					if (espMqttProcessTaskHandle != NULL) {
+						BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+						vTaskNotifyGiveFromISR(espMqttProcessTaskHandle, &xHigherPriorityTaskWoken);
+						portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+        			}
 
 
 
@@ -831,6 +835,38 @@ void ESP_StartUARTReceive(void)
 }
 
 
+/**
+ * @brief Process received MQTT message by dispatching to appropriate handler
+ * @param topic The MQTT topic that was received
+ * @param message The message payload
+ * @note This is the main entry point for all MQTT message processing
+ */
+void ESP_ProcessMQTTMessage(const char* topic, const char* message)
+{
+    if (topic == NULL || message == NULL) {
+        return;
+    }
+    
+    /* Find and execute the appropriate handler */
+    const mqtt_topic_entry_t* entry = topic_handlers;
+    bool handler_found = false;
+    
+    while (entry->topic_pattern != NULL) {
+        if (strcmp(entry->topic_pattern, topic) == 0) {
+            /* Exact match found */
+            
+            entry->handler(message);
+            handler_found = true;
+            break;
+        }
+        entry++;
+    }
+    
+    /* If no handler found, use default handler */
+    if (!handler_found && entry->handler != NULL) {
+        entry->handler(message);
+    }
+}
 /******************************************************************************
  *                          Private Functions                                 *
  ******************************************************************************/
@@ -856,7 +892,6 @@ static void esp_drain_rx_buffer(void)
 
 	// Clear internal buffer
 	esp_uart_rx_index = 0;
-	memset((void *)esp_uart_rx_buffer, 0, ESP_UART_RX_BUFFER_SIZE);
 }
 
 /**
@@ -1036,22 +1071,93 @@ void PingREQ(void){
 
 }
 
-
-void CheckVendReq_State(void){
-	if(g_mqtt_message[0] == 'O' && g_mqtt_message[1] == 'K'){
-		SetVendReq_State(VEND_REQ_STATE_ENABLE);
-	}
-	else if(g_mqtt_message[0] == 'N' && g_mqtt_message[1] == 'K'){
-		SetVendReq_State(VEND_REQ_STATE_DISABLE);
-	}
-	else
-	{
-		SetVendReq_State(VEND_REQ_STATE_IDLE);
-	}
-	ResetMessageBuffer();
-}
-
 void ResetMessageBuffer(void) {
 	memset(g_mqtt_message, 0, MAX_MESSAGE_BUFFER_SIZE);
 	memset(g_mqtt_topic, 0, MAX_MESSAGE_BUFFER_SIZE);
+}
+
+/**
+ * @brief Handle vending request control messages
+ * @param message The message payload
+ */
+static void handle_vend_request_topic(const char* message)
+{    
+    if (strncmp(message, "OK", 2) == 0) {
+        SetVendReq_State(VEND_REQ_STATE_ENABLE);
+        
+        // /* Optionally send confirmation back */
+        // ESP_RequestPublish("stm32/status", "VEND_ENABLED", 1);
+        
+    } else if (strncmp(message, "NK", 2) == 0) {
+        SetVendReq_State(VEND_REQ_STATE_DISABLE);
+        
+        // /* Send confirmation back */
+        // ESP_RequestPublish("stm32/status", "VEND_DISABLED", 1);
+        
+    }
+}
+
+/**
+ * @brief Handle ping/health check messages
+ * @param message The message payload
+ */
+static void handle_ping_topic(const char* message)
+{
+    /* Always respond to ping with pong */
+    ESP_RequestPublish(topic_handlers[ESP_TOPIC_PING].topic_pattern, "ALIVE", 1);
+}
+
+/**
+ * @brief Default handler for unknown topics
+ * @param message The message payload
+ */
+static void handle_unknown_topic(const char* message)
+{    
+    /* Optionally log to a debug topic */
+    ESP_RequestPublish(topic_handlers[ESP_TOPIC_STATUS].topic_pattern, "unknownTopic", 1);
+}
+
+/**
+ * @brief Save WiFi configuration to flash memory
+ * @param ssid The WiFi SSID
+ * @param password The WiFi password
+ */
+static void SaveWiFiConfig(const char *ssid, const char *password)
+{
+    uint8_t buffer[96] = {0};  /* 4-byte aligned size */
+    
+    /* Pack data into buffer */
+    strncpy((char *)buffer, ssid, 32);
+    strncpy((char *)buffer + 32, password, 64);
+    
+    /* Erase sector first */
+    FLASH_Erase(FLASH_CONFIG_ADDR);
+    
+    /* Write new data (must be multiple of 4) */
+    flash_status_t status = FLASH_Write(
+        FLASH_CONFIG_ADDR,
+        buffer,
+        96  /* Size must be multiple of 4 */
+    );
+    
+    if (status != FLASH_OK) {
+        printf("Failed to save WiFi config\n");
+    }
+}
+/**
+ * @brief Load WiFi configuration from flash memory
+ * @param ssid Buffer to store the WiFi SSID
+ * @param password Buffer to store the WiFi password
+ */
+static void LoadWiFiConfig(char *ssid, char *password)
+{
+    uint8_t buffer[96] = {0};
+    
+    flash_status_t status = FLASH_Read(FLASH_CONFIG_ADDR, buffer, 96);
+    
+    if (status == FLASH_OK) {
+        strcpy(ssid, (char *)buffer);
+        strcpy(password, (char *)buffer + 32);
+    } else {
+    }
 }

@@ -20,6 +20,7 @@
 #include "ESP8266_Handler.h"
 #include <string.h>
 #include "SYS_Logger.h"
+
 /******************************************************************************
  *                             Module Config                                  *
  ******************************************************************************/
@@ -44,12 +45,16 @@ static QueueHandle_t espPublishQueue = NULL;       /* Queue for publish requests
 TaskHandle_t mdbRxTaskHandle = NULL;                /* Handle for MDB receive task */
 TaskHandle_t mdbCMDProcessTaskHandle = NULL;        /* Handle for MDB command processing task */
 TaskHandle_t espCommunicationTaskHandle = NULL;           /* Handle for ESP publish task */
+TaskHandle_t espMqttProcessTaskHandle = NULL;    /* Handle for ESP MQTT message processing task */
+
 /******************************************************************************
  *                      Private Function Prototypes                           *
  ******************************************************************************/
 static void mdbRxTask(void *argument);
 static void mdbCMDProcessTask(void *argument);
 static void espCommunicationTask(void *argument);
+static void espMqttProcessTask(void *argument);
+
 static uint8_t safe_string_copy(char* dest, const char* src, uint8_t dest_size);
 static uint8_t safe_strlen(const char* str, uint8_t max_len);
 /******************************************************************************
@@ -109,6 +114,19 @@ void System_TaskCreate(void)
         /* Task creation failed - handle error */
         ESP_LOG_CRITICAL_ERROR(SYSTASK_ERROR_TASK_CREATION_FAILED, configMAX_PRIORITIES-4, NO_CONTEXT_PRESENT);
 
+    }
+
+     xTaskCreate(
+        espMqttProcessTask,
+        "espMqttProcessTask",
+        512,                                    /* Stack size in WORDS */
+        NULL,
+        configMAX_PRIORITIES-5,                 /* Lower priority than ESP communication task */
+        &espMqttProcessTaskHandle);
+        
+    if(espMqttProcessTaskHandle == NULL) {
+        /* Task creation failed - handle error */
+        ESP_LOG_CRITICAL_ERROR(SYSTASK_ERROR_TASK_CREATION_FAILED, configMAX_PRIORITIES-5, NO_CONTEXT_PRESENT);
     }
 }
 
@@ -279,6 +297,39 @@ static void espCommunicationTask(void *argument)
         taskYIELD();
     }
 }
+
+/**
+ * @brief ESP MQTT message processing task
+ * 
+ * @details This task waits for notifications from ESP_UART_RxCallback indicating
+ *          that a complete MQTT message has been received and parsed. When notified,
+ *          it calls ESP_ProcessMQTTMessage to handle the topic and message according
+ *          to the registered handlers.
+ *
+ * @param argument Task parameter (unused)
+ *
+ * @note Priority: configMAX_PRIORITIES-5 (lower than communication tasks)
+ *       Stack: 512 words for message processing operations
+ *       This task blocks indefinitely until notified by the UART callback
+ *
+ * @warning The task processes messages in the order they are received.
+ *          Processing should be efficient to avoid message loss.
+ */
+static void espMqttProcessTask(void *argument)
+{
+    for (;;)
+    {
+        /* Wait for notification from ESP_UART_RxCallback */
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        
+        /* Process the MQTT message using global buffers */
+        ESP_ProcessMQTTMessage(g_mqtt_topic, g_mqtt_message);
+        
+        /* Clear message buffers after processing */
+        ResetMessageBuffer();
+    }
+}
+
 /**
  * @brief Calculate string length with maximum limit (optimized)
  */
@@ -314,3 +365,4 @@ static uint8_t safe_string_copy(char* dest, const char* src, uint8_t dest_size)
     
     return src_len;
 }
+

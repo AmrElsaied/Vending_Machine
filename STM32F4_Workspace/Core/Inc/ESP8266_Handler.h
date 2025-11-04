@@ -22,7 +22,9 @@
 #include "stm32f4xx_hal.h"
 #include <stdint.h>
 #include <stdbool.h>
-
+/* FreeRTOS core */
+#include "FreeRTOS.h"
+#include "task.h"
 /******************************************************************************
  *                             Module Config                                  *
  ******************************************************************************/
@@ -48,10 +50,13 @@
 #define ESP_DEFAULT_SSID            "MA_HOME"
 #define ESP_DEFAULT_PASSWORD        "01289878405"
 
+#define ESP_DEFAULT_UNCONFIGURED_SSID            "EMPTY"
+#define ESP_DEFAULT_UNCONFIGURED_PASSWORD        "EMPTY"
+
 /* Default MQTT Broker Settings */
 #define ESP_DEFAULT_MQTT_BROKER     "192.168.1.110"
 #define ESP_DEFAULT_MQTT_PORT       1883
-#define ESP_DEFAULT_MQTT_TOPIC      "stm32/test123"
+
 #define ESP_DEFAULT_CLIENT_ID       "STM32"
 
 /* Timeout Values (milliseconds) */
@@ -91,6 +96,12 @@ typedef enum {
 	ESP_BUFFER_CHECK_NOK
 } esp_buffer_state;
 
+typedef enum{
+    ESP_TOPIC_VEND_REQUEST,
+    ESP_TOPIC_PING,
+    ESP_TOPIC_STATUS,
+    ESP_TOPIC_MAXNUM
+} esp_topic_index_t;
 
 /**
  * @brief ESP publish request structure
@@ -109,13 +120,27 @@ typedef struct {
     char mqtt_broker_ip[16];         /* MQTT broker IP address */
     uint16_t mqtt_broker_port;       /* MQTT broker port */
     char mqtt_client_id[16];         /* MQTT client identifier */
-    char mqtt_topic[ESP_TOPIC_MAX_LENGTH];   /* Default MQTT topic */
     UART_HandleTypeDef *esp_uart;    /* ESP8266 UART handle pointer */
     UART_HandleTypeDef *debug_uart;  /* Debug UART handle pointer */
     bool debug_enabled;              /* Enable/disable debug output */
 } ESP_Config_t;
 
 
+/**
+ * @brief Function pointer type for MQTT topic handlers
+ * @param topic The MQTT topic that was received
+ * @param message The message payload
+ */
+typedef void (*mqtt_topic_handler_t)(const char* message);
+
+/**
+ * @brief Structure for mapping topics to their handlers
+ */
+typedef struct {
+    const char* topic_pattern;          /* Topic string or pattern */
+    mqtt_topic_handler_t handler;       /* Function to handle this topic */
+    const char* description;            /* Human-readable description */
+} mqtt_topic_entry_t;
 
 /******************************************************************************
  *                     Global Variables (extern)                              *
@@ -134,6 +159,8 @@ extern volatile bool payload_ready;
 extern char g_mqtt_topic[MAX_TOPIC_BUFFER_SIZE];
 extern char g_mqtt_message[MAX_MESSAGE_BUFFER_SIZE];
 extern esp_buffer_state esp_buffer_current_state;
+extern TaskHandle_t espMqttProcessTaskHandle;
+extern const mqtt_topic_entry_t topic_handlers[];
 /******************************************************************************
  *                        Function Declarations                               *
  ******************************************************************************/
@@ -214,14 +241,15 @@ void ESP_StartUARTReceive(void);
  */
 void PingREQ(void);
 
-
-/**
- * @brief Check and update the vend request state based on received message
- */
-void CheckVendReq_State(void);
-
 /**
  * @brief Reset the vend request state and clear buffers
  */
 void ResetMessageBuffer(void);
+/**
+ * @brief Process an incoming MQTT message
+ * @param topic The MQTT topic that was received
+ * @param message The message payload
+ */
+void ESP_ProcessMQTTMessage(const char* topic, const char* message);
+
 #endif /* ESP8266_HANDLER_H_ */
