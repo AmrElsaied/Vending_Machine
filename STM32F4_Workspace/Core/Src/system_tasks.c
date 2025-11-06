@@ -20,6 +20,7 @@
 #include "ESP8266_Handler.h"
 #include <string.h>
 #include "SYS_Logger.h"
+#include "Periodic_Task_Manager.h"
 
 /******************************************************************************
  *                             Module Config                                  *
@@ -46,7 +47,7 @@ TaskHandle_t mdbRxTaskHandle = NULL;                /* Handle for MDB receive ta
 TaskHandle_t mdbCMDProcessTaskHandle = NULL;        /* Handle for MDB command processing task */
 TaskHandle_t espCommunicationTaskHandle = NULL;           /* Handle for ESP publish task */
 TaskHandle_t espMqttProcessTaskHandle = NULL;    /* Handle for ESP MQTT message processing task */
-
+TaskHandle_t periodicMainTaskHandle = NULL;       /* Handle for periodic main task */
 /******************************************************************************
  *                      Private Function Prototypes                           *
  ******************************************************************************/
@@ -54,6 +55,7 @@ static void mdbRxTask(void *argument);
 static void mdbCMDProcessTask(void *argument);
 static void espCommunicationTask(void *argument);
 static void espMqttProcessTask(void *argument);
+static void PeriodicMainTask(void *argument);
 
 static uint8_t safe_string_copy(char* dest, const char* src, uint8_t dest_size);
 static uint8_t safe_strlen(const char* str, uint8_t max_len);
@@ -128,6 +130,18 @@ void System_TaskCreate(void)
         /* Task creation failed - handle error */
         ESP_LOG_CRITICAL_ERROR(SYSTASK_ERROR_TASK_CREATION_FAILED, configMAX_PRIORITIES-5, NO_CONTEXT_PRESENT);
     }
+
+    // xTaskCreate(
+    //     PeriodicMainTask,
+    //     "PeriodicMainTask",
+    //     512*1,                                    /* Stack size in WORDS */
+    //     NULL,
+    //     configMAX_PRIORITIES-10,                 /* Lower priority than ESP MQTT task */
+    //     &periodicMainTaskHandle);
+    // if(periodicMainTaskHandle == NULL) {
+    //     /* Task creation failed - handle error */
+    //     ESP_LOG_CRITICAL_ERROR(SYSTASK_ERROR_TASK_CREATION_FAILED, configMAX_PRIORITIES-10, NO_CONTEXT_PRESENT);
+    // }
 }
 
 /**
@@ -364,5 +378,43 @@ static uint8_t safe_string_copy(char* dest, const char* src, uint8_t dest_size)
     dest[src_len] = '\0';
     
     return src_len;
+}
+
+/**
+ * @brief Main periodic task (10ms period)
+ * Handles all periodic operations: button, monitoring, LED control, etc.
+ */
+static void PeriodicMainTask(void *argument)
+{
+    
+    /* Initialize managers */
+    PERIODIC_TASK_Init();
+    // SYSTEM_MONITOR_Init();
+    
+    /* Register periodic modules */
+    periodic_task_config_t button_config = {
+        .module_id = PERIODIC_MODULE_BUTTON,
+        .callback = BUTTON_PeriodicCallback,
+        .period_ms = 100,    /* Every 100ms for fast debouncing */
+        .enabled = true
+    };
+    PERIODIC_TASK_Register(&button_config);
+    
+    // periodic_task_config_t monitor_config = {
+    //     .module_id = PERIODIC_MODULE_SYSTEM_MONITOR,
+    //     .callback = SYSTEM_MONITOR_PeriodicUpdate,
+    //     .period_ms = 50,    /* Every 50ms for monitoring */
+    //     .enabled = true
+    // };
+    // PERIODIC_TASK_Register(&monitor_config);
+
+    /* Main task loop */
+    for (;;) {
+        /* Execute all registered periodic tasks */
+        PERIODIC_TASK_Execute();
+        
+        /* Sleep for base period */
+        vTaskDelay(pdMS_TO_TICKS(PERIODIC_TASK_BASE_PERIOD_MS));
+    }
 }
 

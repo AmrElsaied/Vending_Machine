@@ -57,6 +57,9 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define RESET_BUTTON_Pin GPIO_PIN_8
+#define RESET_BUTTON_GPIO_Port GPIOB
+#define RESET_BUTTON_EXTI_IRQn EXTI9_5_IRQn
 #define VENDING_Pin GPIO_PIN_9
 #define VENDING_GPIO_Port GPIOB
 

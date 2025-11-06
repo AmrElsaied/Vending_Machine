@@ -27,6 +27,8 @@
 #include "system_tasks.h"
 #include "ESP8266_Handler.h"
 #include "SYS_Logger.h"
+#include "Flash_Driver.h"
+#include "Periodic_Task_Manager.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -108,7 +110,12 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     }
 }
 
-
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+    if (GPIO_Pin == RESET_BUTTON_Pin) {
+        PERIODIC_TASK_ButtonInterrupt();
+    }
+}
 /* USER CODE END 0 */
 
 /**
@@ -144,6 +151,7 @@ int main(void)
   MX_USART2_UART_Init();
   MX_USART6_UART_Init();
   /* USER CODE BEGIN 2 */
+  FLASH_Init();       /* Initialize Flash driver */
   SYS_InitLogger();   /* Initialize system logger */
   ESP_Init();         /* Initialize ESP8266 module */
   MDB_BusInit();      /* Initialize MDB bus */
@@ -359,11 +367,21 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
+  /*Configure GPIO pin : RESET_BUTTON_Pin */
+  GPIO_InitStruct.Pin = RESET_BUTTON_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(RESET_BUTTON_GPIO_Port, &GPIO_InitStruct);
+
   /*Configure GPIO pin : VENDING_Pin */
   GPIO_InitStruct.Pin = VENDING_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(VENDING_GPIO_Port, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 

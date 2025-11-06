@@ -50,8 +50,8 @@
 #define ESP_DEFAULT_SSID            "MA_HOME"
 #define ESP_DEFAULT_PASSWORD        "01289878405"
 
-#define ESP_DEFAULT_UNCONFIGURED_SSID            "EMPTY"
-#define ESP_DEFAULT_UNCONFIGURED_PASSWORD        "EMPTY"
+#define ESP_DEFAULT_UNCONFIGURED_SSID            "EMPTY_CONFIG"
+#define ESP_DEFAULT_UNCONFIGURED_PASSWORD        "EMPTY_CONFIG"
 
 /* Default MQTT Broker Settings */
 #define ESP_DEFAULT_MQTT_BROKER     "192.168.1.110"
@@ -252,4 +252,10 @@ void ResetMessageBuffer(void);
  */
 void ESP_ProcessMQTTMessage(const char* topic, const char* message);
 
+/**
+ * @brief Save WiFi configuration to non-volatile memory
+ * @param ssid The WiFi SSID (max 31 chars)
+ * @param password The WiFi password (max 63 chars)
+ */
+void SaveWiFiConfig(const char *ssid, const char *password);
 #endif /* ESP8266_HANDLER_H_ */

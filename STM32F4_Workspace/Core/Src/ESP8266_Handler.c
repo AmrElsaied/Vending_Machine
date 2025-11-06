@@ -48,6 +48,8 @@ static void esp_debug_print(const char *message);
 static void handle_vend_request_topic(const char* message);
 static void handle_ping_topic(const char* message);
 static void handle_unknown_topic(const char* message);
+static bool FLASH_IsErased(uint32_t addr, uint32_t size);
+static void LoadWiFiConfig(char* ssid, char* password);
 
 
 /******************************************************************************
@@ -123,11 +125,12 @@ ESP_Config_t* ESP_GetConfig(void)
  */
 void ESP_Init(void)
 {
-	// LoadWiFiConfig(esp_config.wifi_ssid, esp_config.wifi_password);
+	// LoadWiFiConfig(ESP8266_DefaultConfig.wifi_ssid, ESP8266_DefaultConfig.wifi_password);
 	// // Check if WiFi credentials are unconfigured
-	// if (strcmp(esp_config.wifi_ssid, ESP_DEFAULT_UNCONFIGURED_SSID) == 0 || 
-	// 	strcmp(esp_config.wifi_password, ESP_DEFAULT_UNCONFIGURED_PASSWORD) == 0) {
+	// if (strcmp(ESP8266_DefaultConfig.wifi_ssid, ESP_DEFAULT_UNCONFIGURED_SSID) == 0 || 
+	// 	strcmp(ESP8266_DefaultConfig.wifi_password, ESP_DEFAULT_UNCONFIGURED_PASSWORD) == 0) {
 	// 	esp_current_status = ESP_STATUS_ERROR;
+	// 	//will be asked to configure via HTTP requests through the application
 	// 	return;
 	// }
 	// Set the configuration with the default configuration
@@ -153,11 +156,6 @@ void ESP_Init(void)
 		return;
 	}
 
-	//    if (ESP_SendAT("ATE0", "OK", ESP_AT_COMMAND_TIMEOUT) != HAL_OK) {
-	//            esp_current_status = ESP_STATUS_ERROR;
-	//            return;
-	//        }
-
 
 	// Setup WiFi connection
 	if (esp_setup_wifi_connection() != HAL_OK) {
@@ -178,7 +176,6 @@ void ESP_Init(void)
 	}
 
 	esp_current_status = ESP_STATUS_MQTT_CONNECTED;
-	//esp_debug_print("[ESP] MQTT Connected Successfully!\r\n");
 	// Subscribe to topics
 	for (int i = 0; i < ESP_TOPIC_MAXNUM; i++) {
 		ESP_Subscribe(topic_handlers[i].topic_pattern, 1);
@@ -1119,45 +1116,97 @@ static void handle_unknown_topic(const char* message)
 
 /**
  * @brief Save WiFi configuration to flash memory
- * @param ssid The WiFi SSID
- * @param password The WiFi password
+ * @param ssid The WiFi SSID (max 31 chars)
+ * @param password The WiFi password (max 63 chars)
+ * @note Null terminators are placed immediately after string data for proper strcmp() comparison
  */
-static void SaveWiFiConfig(const char *ssid, const char *password)
+void SaveWiFiConfig(const char *ssid, const char *password)
 {
     uint8_t buffer[96] = {0};  /* 4-byte aligned size */
     
-    /* Pack data into buffer */
-    strncpy((char *)buffer, ssid, 32);
-    strncpy((char *)buffer + 32, password, 64);
+    if (ssid == NULL || password == NULL) {
+        return;
+    }
+    
+    /* Copy SSID and place null terminator right after the string */
+    size_t ssid_len = strlen(ssid);
+    if (ssid_len > 31) ssid_len = 31;  /* Max 31 chars for SSID */
+    
+    strncpy((char *)buffer, ssid, ssid_len);
+    buffer[ssid_len] = '\0';  /* Null terminator immediately after string */
+    
+    /* Copy password and place null terminator right after the string */
+    size_t password_len = strlen(password);
+    if (password_len > 63) password_len = 63;  /* Max 63 chars for password */
+    
+    strncpy((char *)buffer + 32, password, password_len);
+    buffer[32 + password_len] = '\0';  /* Null terminator immediately after string */
     
     /* Erase sector first */
-    FLASH_Erase(FLASH_CONFIG_ADDR);
+    flash_status_t erase_status = FLASH_Erase(FLASH_CONFIG_ADDR);
+    if (erase_status != FLASH_OK) {
+        printf("Failed to erase Flash sector\n");
+        return;
+    }
     
     /* Write new data (must be multiple of 4) */
-    flash_status_t status = FLASH_Write(
+    flash_status_t write_status = FLASH_Write(
         FLASH_CONFIG_ADDR,
         buffer,
         96  /* Size must be multiple of 4 */
     );
     
-    if (status != FLASH_OK) {
+    if (write_status != FLASH_OK) {
         printf("Failed to save WiFi config\n");
     }
 }
+
+/**
+ * @brief Check if Flash sector is erased
+ */
+static bool FLASH_IsErased(uint32_t addr, uint32_t size)
+{
+    uint8_t *ptr = (uint8_t *)addr;
+    
+    for (uint32_t i = 0; i < size; i++) {
+        if (ptr[i] != 0xFF) {
+            return false;  /* Found non-0xFF byte, not erased */
+        }
+    }
+    return true;  /* All bytes are 0xFF, is erased */
+}
+
 /**
  * @brief Load WiFi configuration from flash memory
- * @param ssid Buffer to store the WiFi SSID
- * @param password Buffer to store the WiFi password
+ * @param ssid Buffer to store the WiFi SSID (must be at least 32 bytes)
+ * @param password Buffer to store the WiFi password (must be at least 64 bytes)
+ * @note Reads from flash and relies on null terminators placed during save for safe strcmp()
  */
 static void LoadWiFiConfig(char *ssid, char *password)
 {
     uint8_t buffer[96] = {0};
     
+    if (ssid == NULL || password == NULL) {
+        return;
+    }
+    
     flash_status_t status = FLASH_Read(FLASH_CONFIG_ADDR, buffer, 96);
     
     if (status == FLASH_OK) {
+		/* Check if Flash is erased (all 0xFF) */
+        if (FLASH_IsErased(FLASH_CONFIG_ADDR, 96)) {
+            strcpy(ssid, ESP_DEFAULT_UNCONFIGURED_SSID);
+            strcpy(password, ESP_DEFAULT_UNCONFIGURED_PASSWORD);
+            return;
+        }
+        /* Copy SSID - strcpy stops at null terminator placed during save */
         strcpy(ssid, (char *)buffer);
+        
+        /* Copy password - strcpy stops at null terminator placed during save */
         strcpy(password, (char *)buffer + 32);
     } else {
+        /* On error, set to default unconfigured state */
+        strcpy(ssid, ESP_DEFAULT_UNCONFIGURED_SSID);
+        strcpy(password, ESP_DEFAULT_UNCONFIGURED_PASSWORD);
     }
 }
