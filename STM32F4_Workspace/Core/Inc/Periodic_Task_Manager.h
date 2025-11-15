@@ -118,4 +118,10 @@ void BUTTON_PeriodicCallback(uint32_t delta_ms);
  * @note Call this from HAL_GPIO_EXTI_Callback()
  */
 void PERIODIC_TASK_ButtonInterrupt(void);
+/**
+ * @brief Communication monitoring callback
+ * @param delta_ms Time elapsed since last call
+ * @note Register this with period 50ms
+ */
+void PERIODIC_TASK_CommunicationMonotoringCallback(uint32_t delta_ms);
 #endif /* PERIODIC_TASK_MANAGER_H_ */

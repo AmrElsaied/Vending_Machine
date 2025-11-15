@@ -29,8 +29,6 @@
  *                             Module Config                                  *
  ******************************************************************************/
 /* UART Configuration */
-#define ESP_UART_INSTANCE           USART1    /* ESP8266 UART instance */
-#define ESP_DEBUG_UART_INSTANCE     USART2    /* Debug UART instance */
 #define ESP_PING_TIMEOUT_MS             (40000)     /* 40 seconds ping timeout */
 #define ESP_TASK_MAX_TOPIC_LEN          (64)        /* Maximum topic length */
 #define ESP_TASK_MAX_MESSAGE_LEN        (128)       /* Maximum message length */
@@ -67,7 +65,8 @@
 #define ESP_RESTORE_TIMEOUT         5000
 
 #define RX_BUF_LEN   64
-
+#define MAX_SSID_LEN 32
+#define MAX_PASS_LEN 64
 /******************************************************************************
  *                          Type Definitions                                  *
  ******************************************************************************/
@@ -82,6 +81,7 @@ typedef enum {
     ESP_STATUS_WIFI_CONNECTED,       /* WiFi connected */
     ESP_STATUS_MQTT_DISCONNECTED,    /* MQTT not connected */
     ESP_STATUS_MQTT_CONNECTED,       /* MQTT connected and ready */
+    ESP_STATUS_CONFIGURING,         /* Module in configuration mode */
     ESP_STATUS_ERROR                 /* Error state */
 } ESP_Status_t;
 
@@ -258,4 +258,8 @@ void ESP_ProcessMQTTMessage(const char* topic, const char* message);
  * @param password The WiFi password (max 63 chars)
  */
 void SaveWiFiConfig(const char *ssid, const char *password);
+
+HAL_StatusTypeDef ESP_AP_Mode(void);
+
+HAL_StatusTypeDef ESP_WaitForCredentials(void);
 #endif /* ESP8266_HANDLER_H_ */

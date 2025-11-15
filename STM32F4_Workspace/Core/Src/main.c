@@ -29,6 +29,7 @@
 #include "SYS_Logger.h"
 #include "Flash_Driver.h"
 #include "Periodic_Task_Manager.h"
+#include "LED_Controller.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -152,6 +153,7 @@ int main(void)
   MX_USART6_UART_Init();
   /* USER CODE BEGIN 2 */
   FLASH_Init();       /* Initialize Flash driver */
+  LED_CONTROLLER_Init(); /* Initialize LED controller */
   SYS_InitLogger();   /* Initialize system logger */
   ESP_Init();         /* Initialize ESP8266 module */
   MDB_BusInit();      /* Initialize MDB bus */
@@ -366,6 +368,16 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, DIAG_LED_Pin|COMM_LED_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pins : DIAG_LED_Pin COMM_LED_Pin */
+  GPIO_InitStruct.Pin = DIAG_LED_Pin|COMM_LED_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /*Configure GPIO pin : RESET_BUTTON_Pin */
   GPIO_InitStruct.Pin = RESET_BUTTON_Pin;

@@ -12,6 +12,7 @@
 #include "Flash_Driver.h"
 #include "main.h"
 #include "ESP8266_Handler.h"
+#include "LED_Controller.h"
 
 /******************************************************************************
  *                          Private Definitions
@@ -36,7 +37,7 @@ static uint32_t task_manager_tick = 0;
 static uint32_t button_press_start_time = 0;
 static bool button_long_press_notified = false;
 static bool button_interrupt_flag = false;  /* NEW: Flag from GPIO interrupt */
-
+static bool Comm_Led_Blinking = false;
 
 /******************************************************************************
  *                          Public Functions
@@ -227,4 +228,20 @@ void BUTTON_PeriodicCallback(uint32_t delta_ms)
 void PERIODIC_TASK_ButtonInterrupt(void)
 {
     button_interrupt_flag = true;  /* Signal that button activity occurred */
+}
+
+void PERIODIC_TASK_CommunicationMonotoringCallback(uint32_t delta_ms)
+{
+    ESP_Status_t esp_cur_status = ESP_GetStatus();
+    if (esp_cur_status == ESP_STATUS_MQTT_CONNECTED) {
+        if (!Comm_Led_Blinking) {
+            LED_Blink(LED_CHANNEL_COMM, 900);  /* Blink every 900ms */
+            Comm_Led_Blinking = true;
+        }
+        LED_PeriodicUpdate(delta_ms);
+    }
+    else {
+        LED_StopBlinking(LED_CHANNEL_COMM);
+        Comm_Led_Blinking = false;
+    }
 }

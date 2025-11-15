@@ -408,6 +408,15 @@ static void PeriodicMainTask(void *argument)
     // };
     // PERIODIC_TASK_Register(&monitor_config);
 
+    /* Register LED callback (50ms) */
+    periodic_task_config_t comm_config = {
+        .module_id = PERIODIC_MODULE_COMMUNICATION,
+        .callback = PERIODIC_TASK_CommunicationMonotoringCallback,
+        .period_ms = 1000,    /* Every 1000ms for LED update */
+        .enabled = true
+    };
+    PERIODIC_TASK_Register(&comm_config);
+
     /* Main task loop */
     for (;;) {
         /* Execute all registered periodic tasks */

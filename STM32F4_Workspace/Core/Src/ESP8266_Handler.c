@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include "MDB_Handler.h"
 #include "Flash_Driver.h"
+#include "LED_Controller.h"
 /******************************************************************************
  *                             Module Config                                  *
  ******************************************************************************/
@@ -50,7 +51,7 @@ static void handle_ping_topic(const char* message);
 static void handle_unknown_topic(const char* message);
 static bool FLASH_IsErased(uint32_t addr, uint32_t size);
 static void LoadWiFiConfig(char* ssid, char* password);
-
+static void clear_wifi_credentials(void);
 
 /******************************************************************************
  *                          Private Variables                                 *
@@ -125,18 +126,27 @@ ESP_Config_t* ESP_GetConfig(void)
  */
 void ESP_Init(void)
 {
-	// LoadWiFiConfig(ESP8266_DefaultConfig.wifi_ssid, ESP8266_DefaultConfig.wifi_password);
-	// // Check if WiFi credentials are unconfigured
-	// if (strcmp(ESP8266_DefaultConfig.wifi_ssid, ESP_DEFAULT_UNCONFIGURED_SSID) == 0 || 
-	// 	strcmp(ESP8266_DefaultConfig.wifi_password, ESP_DEFAULT_UNCONFIGURED_PASSWORD) == 0) {
-	// 	esp_current_status = ESP_STATUS_ERROR;
-	// 	//will be asked to configure via HTTP requests through the application
-	// 	return;
-	// }
+//	LED_On(LED_CHANNEL_COMM); // Indicate initialization start
+//	clear_wifi_credentials();
+//	LoadWiFiConfig(ESP8266_DefaultConfig.wifi_ssid, ESP8266_DefaultConfig.wifi_password);
 	// Set the configuration with the default configuration
 	ESP_SetConfig(&ESP8266_DefaultConfig);
-
-
+	// Check if WiFi credentials are unconfigured
+//	if (strcmp(ESP8266_DefaultConfig.wifi_ssid, ESP_DEFAULT_UNCONFIGURED_SSID) == 0 ||
+//		strcmp(ESP8266_DefaultConfig.wifi_password, ESP_DEFAULT_UNCONFIGURED_PASSWORD) == 0) {
+//		esp_current_status = ESP_STATUS_CONFIGURING;
+//		// will be asked to configure via HTTP requests through the application
+//		//Start the Access Point mode
+//		ESP_AP_Mode();
+//		// Get the SSID and Password from the user via HTTP server
+//		clear_wifi_credentials();
+//		ESP_WaitForCredentials();
+//		// Store the new credentials in flash
+//		SaveWiFiConfig(ESP8266_DefaultConfig.wifi_ssid, ESP8266_DefaultConfig.wifi_password);
+//		//Reset the CPU
+//		HAL_NVIC_SystemReset();
+//		return;
+//	}
 	HAL_Delay(2000);
 	// Validate configuration
 	if (esp_config.esp_uart == NULL) {
@@ -155,7 +165,6 @@ void ESP_Init(void)
 		esp_current_status = ESP_STATUS_ERROR;
 		return;
 	}
-
 
 	// Setup WiFi connection
 	if (esp_setup_wifi_connection() != HAL_OK) {
@@ -944,6 +953,10 @@ static HAL_StatusTypeDef esp_setup_tcp_connection(void)
 	//               return HAL_ERROR;
 	//           }
 
+	if (ESP_SendAT("AT+CIPSERVER=0", "OK", 2000) != HAL_OK) {
+		return HAL_ERROR;
+	}
+
 	if (ESP_SendAT("AT+CIPMUX=0", "OK", 2000) != HAL_OK) {
 		return HAL_ERROR;
 	}
@@ -1145,7 +1158,6 @@ void SaveWiFiConfig(const char *ssid, const char *password)
     /* Erase sector first */
     flash_status_t erase_status = FLASH_Erase(FLASH_CONFIG_ADDR);
     if (erase_status != FLASH_OK) {
-        printf("Failed to erase Flash sector\n");
         return;
     }
     
@@ -1157,7 +1169,6 @@ void SaveWiFiConfig(const char *ssid, const char *password)
     );
     
     if (write_status != FLASH_OK) {
-        printf("Failed to save WiFi config\n");
     }
 }
 
@@ -1191,7 +1202,7 @@ static void LoadWiFiConfig(char *ssid, char *password)
     }
     
     flash_status_t status = FLASH_Read(FLASH_CONFIG_ADDR, buffer, 96);
-    
+	 
     if (status == FLASH_OK) {
 		/* Check if Flash is erased (all 0xFF) */
         if (FLASH_IsErased(FLASH_CONFIG_ADDR, 96)) {
@@ -1209,4 +1220,256 @@ static void LoadWiFiConfig(char *ssid, char *password)
         strcpy(ssid, ESP_DEFAULT_UNCONFIGURED_SSID);
         strcpy(password, ESP_DEFAULT_UNCONFIGURED_PASSWORD);
     }
+}
+
+static void clear_wifi_credentials(void)
+{
+    memset(ESP8266_DefaultConfig.wifi_ssid, 0, sizeof(ESP8266_DefaultConfig.wifi_ssid));
+    memset(ESP8266_DefaultConfig.wifi_password, 0, sizeof(ESP8266_DefaultConfig.wifi_password));
+}
+
+HAL_StatusTypeDef ESP_AP_Mode(void){
+	HAL_Delay(2000);
+	// Validate configuration
+	if (esp_config.esp_uart == NULL) {
+		esp_current_status = ESP_STATUS_ERROR;
+		return HAL_ERROR;
+	}
+
+	char command_buffer[128];
+
+	// Basic ESP8266 setup
+	if (ESP_SendAT("AT", "OK", ESP_AT_COMMAND_TIMEOUT) != HAL_OK) {
+		esp_current_status = ESP_STATUS_ERROR;
+		return HAL_ERROR;
+	}
+
+	// 1. Set Wi-Fi Mode to AP (Mode 2)
+	if (ESP_SendAT("AT+CWMODE=2", "OK", 2000) != HAL_OK) {
+		return HAL_ERROR;
+	}
+
+	// 2. Configure Static IP address for AP: AT+CIPAP="IP","Gateway","Netmask"
+	snprintf(command_buffer, sizeof(command_buffer),
+			"AT+CIPAP=\"%s\",\"%s\",\"%s\"",
+			"192.168.10.1",     // Static IP
+			"192.168.10.1",     // Gateway
+			"255.255.255.0");   // Netmask
+
+	if (ESP_SendAT(command_buffer, "OK", 2000) != HAL_OK) {
+		return HAL_ERROR;
+	}
+
+	// 3. Set up the AP: AT+CWSAP="SSID","Password",Channel,Encryption
+	snprintf(command_buffer, sizeof(command_buffer),
+			"AT+CWSAP=\"%s\",\"%s\",%d,%d",
+			"ESP_WIFI",       // SSID
+			"987654321",      // Password
+			5,                // Channel (5)
+			3);               // WPA2_PSK (3)
+
+	if (ESP_SendAT(command_buffer, "OK", ESP_WIFI_CONNECT_TIMEOUT) != HAL_OK) {
+		return HAL_ERROR;
+	}
+
+	// 4. Enable Multiple Connections
+	if (ESP_SendAT("AT+CIPMUX=1", "OK", 2000) != HAL_OK) {
+		return HAL_ERROR;
+	}
+
+	// 5. Start TCP Server on Port 80
+	if (ESP_SendAT("AT+CIPSERVER=1,80", "OK", 2000) != HAL_OK) {
+		return HAL_ERROR;
+	}
+
+	return HAL_OK;
+}
+
+HAL_StatusTypeDef ESP_WaitForCredentials(void)
+{
+	// === State Machine Definition ===
+	enum {
+		STATE_WAIT_IPD,
+		STATE_PARSE_HEADER,
+		STATE_WAIT_PAYLOAD
+	} state = STATE_WAIT_IPD;
+
+	// === UART Buffer and Index ===
+	static char rxbuf[512];
+	static size_t idx = 0;
+
+	// === State Variables ===
+	static long expected_len = 0;
+	static size_t payload_start_offset = 0;
+
+	//char debug_msg[128]; // Kept for potential use/commenting if needed
+
+	/* Clear and Reset for THIS call */
+	idx = 0;
+	rxbuf[0] = '\0';
+
+	while (1) // Loop forever until HAL_OK is returned
+	{
+		/* --- 1. POLL UART FOR NEW BYTES --- */
+		uint8_t ch;
+		// Non-blocking read (20ms timeout)
+		if (HAL_UART_Receive(esp_config.esp_uart, &ch, 1, 20) == HAL_OK)
+		{
+			if (idx < sizeof(rxbuf) - 1)
+			{
+				rxbuf[idx++] = (char)ch;
+				rxbuf[idx]   = '\0';
+			}
+			else
+			{
+				/* Buffer full: Reset the buffer and state */
+				// snprintf(debug_msg, sizeof(debug_msg), "[FAIL] RX Buffer overflow at index %lu. Resetting.\r\n", (unsigned long)idx);
+				// esp_debug_print(debug_msg);
+				idx = 0;
+				rxbuf[0] = '\0';
+				state = STATE_WAIT_IPD;
+				continue;
+			}
+		}
+
+		/* --- 2. STATE MACHINE PROCESSING --- */
+		switch(state)
+		{
+		case STATE_WAIT_IPD:
+		{
+			char *hdr = strstr(rxbuf, "+IPD,");
+			if (hdr != NULL)
+			{
+				// Shift buffer to remove garbage before +IPD
+				if (hdr != rxbuf) {
+					size_t shift_len = idx - (hdr - rxbuf);
+					memmove(rxbuf, hdr, shift_len + 1);
+					idx = shift_len;
+					rxbuf[idx] = '\0';
+				}
+
+				payload_start_offset = 0;
+				expected_len = 0;
+				state = STATE_PARSE_HEADER;
+
+				// Aggressively read to pull in the rest of the header/payload start
+				size_t bytes_to_read = 30;
+				uint8_t temp_ch;
+				uint32_t proactive_start = HAL_GetTick();
+
+				while (idx < sizeof(rxbuf) - 1 && bytes_to_read > 0 && (HAL_GetTick() - proactive_start) < 200) {
+					if (HAL_UART_Receive(esp_config.esp_uart, &temp_ch, 1, 5) == HAL_OK)
+					{
+						rxbuf[idx++] = (char)temp_ch;
+						rxbuf[idx] = '\0';
+						bytes_to_read--;
+					}
+				}
+				// esp_debug_print("[SUCCESS] Found +IPD header. Transitioning to PARSE_HEADER.\r\n");
+			}
+			break;
+		}
+
+		case STATE_PARSE_HEADER:
+		{
+			char *p = rxbuf + 5; // skip "+IPD,"
+			char *endptr;
+			long link_id;
+
+			if ((size_t)(p - rxbuf) >= idx) break;
+
+			// 1. Parse Link ID
+			link_id = strtol(p, &endptr, 10);
+			if (endptr == p || *endptr != ',') {
+				break; // Incomplete/invalid ID
+			}
+
+			p = endptr + 1;
+
+			if ((size_t)(p - rxbuf) >= idx) break;
+
+			// 2. Parse Payload Length
+			long payload_len = strtol(p, &endptr, 10);
+			if (endptr == p || *endptr != ':' || payload_len <= 0) {
+				break; // Incomplete/invalid length
+			}
+
+			// 3. Header is complete!
+			expected_len = payload_len;
+			payload_start_offset = (endptr + 1) - rxbuf;
+
+			// snprintf(debug_msg, sizeof(debug_msg), "[SUCCESS] Header complete: ID=%ld, Length=%ld. Transitioning to WAIT_PAYLOAD.\r\n", link_id, expected_len);
+			// esp_debug_print(debug_msg);
+
+			state = STATE_WAIT_PAYLOAD;
+			break;
+		}
+
+		case STATE_WAIT_PAYLOAD:
+		{
+			long received_len = (long)(idx - payload_start_offset);
+
+			// Check if enough data is available
+			if (received_len >= expected_len)
+			{
+				char *payload = rxbuf + payload_start_offset;
+				payload[expected_len] = '\0';
+
+				// snprintf(debug_msg, sizeof(debug_msg), "[SUCCESS] Full payload received (%ld bytes): %s\r\n", received_len, payload);
+				// esp_debug_print(debug_msg);
+
+				/* --- FINAL PARSING: SSID:PASS --- */
+				char *sep = strchr(payload, ':');
+				if (sep != NULL)
+				{
+					size_t ssid_len = sep - payload;
+					char *pass = sep + 1;
+					size_t pass_len = expected_len - (ssid_len + 1);
+
+					// Boundary checks
+					if (ssid_len > 0 && ssid_len < MAX_SSID_LEN && pass_len > 0 && pass_len < MAX_PASS_LEN)
+					{
+						// Copy credentials
+						memcpy(ESP8266_DefaultConfig.wifi_ssid, payload, ssid_len);
+						ESP8266_DefaultConfig.wifi_ssid[ssid_len] = '\0';
+						memcpy(ESP8266_DefaultConfig.wifi_password, pass, pass_len);
+						ESP8266_DefaultConfig.wifi_password[pass_len] = '\0';
+
+						// Trim trailing whitespace from SSID/PASS
+						size_t len_ssid = strnlen(ESP8266_DefaultConfig.wifi_ssid, MAX_SSID_LEN);
+						while (len_ssid > 0) {
+							char c = ESP8266_DefaultConfig.wifi_ssid[len_ssid - 1];
+							if (c == ' ' || c == '\r' || c == '\n') {
+								len_ssid--;
+								ESP8266_DefaultConfig.wifi_ssid[len_ssid] = '\0';
+							} else {
+								break;
+							}
+						}
+
+						size_t len_pass = strnlen(ESP8266_DefaultConfig.wifi_password, MAX_PASS_LEN);
+						while (len_pass > 0) {
+							char c = ESP8266_DefaultConfig.wifi_password[len_pass - 1];
+							if (c == ' ' || c == '\r' || c == '\n') {
+								len_pass--;
+								ESP8266_DefaultConfig.wifi_password[len_pass] = '\0';
+							} else {
+								break;
+							}
+						}
+
+						// *** FINAL SUCCESS ***
+						return HAL_OK;
+					}
+				}
+
+				/* Invalid format, reset buffer and state */
+				idx = 0;
+				rxbuf[0] = '\0';
+				state = STATE_WAIT_IPD;
+			}
+			break;
+		}
+		}
+	}
 }

@@ -57,6 +57,10 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define DIAG_LED_Pin GPIO_PIN_6
+#define DIAG_LED_GPIO_Port GPIOB
+#define COMM_LED_Pin GPIO_PIN_7
+#define COMM_LED_GPIO_Port GPIOB
 #define RESET_BUTTON_Pin GPIO_PIN_8
 #define RESET_BUTTON_GPIO_Port GPIOB
 #define RESET_BUTTON_EXTI_IRQn EXTI9_5_IRQn
