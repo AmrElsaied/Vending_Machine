@@ -22,16 +22,16 @@ typedef struct {
 } flash_sector_t;
 
 /* STM32F401CC has 16 sectors total, user area is sectors 12-15 */
-static const flash_sector_t flash_sectors[] = {
-    {0, 0x08000000, 0x4000},      /* 16 KB */
-    {1, 0x08004000, 0x4000},      /* 16 KB */
-    {2, 0x08008000, 0x4000},      /* 16 KB */
-    {3, 0x0800C000, 0x4000},      /* 16 KB */
-    {4, 0x08010000, 0x10000},     /* 64 KB */
-    {5, 0x08020000, 0x20000},     /* 128 KB */
-    {6, 0x08040000, 0x20000},     /* 128 KB (extends beyond F401CC) */
-    {7, 0x08060000, 0x20000}     /* 128 KB (extends beyond F401CC) */
-};
+//static const flash_sector_t flash_sectors[] = {
+//    {0, 0x08000000, 0x4000},      /* 16 KB */
+//    {1, 0x08004000, 0x4000},      /* 16 KB */
+//    {2, 0x08008000, 0x4000},      /* 16 KB */
+//    {3, 0x0800C000, 0x4000},      /* 16 KB */
+//    {4, 0x08010000, 0x10000},     /* 64 KB */
+//    {5, 0x08020000, 0x20000},     /* 128 KB */
+//    {6, 0x08040000, 0x20000},     /* 128 KB (extends beyond F401CC) */
+//    {7, 0x08060000, 0x20000}     /* 128 KB (extends beyond F401CC) */
+//};
 
 static bool flash_initialized = false;
 

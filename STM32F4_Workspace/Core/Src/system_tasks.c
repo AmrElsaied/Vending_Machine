@@ -337,7 +337,7 @@ static void espMqttProcessTask(void *argument)
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         
         /* Process the MQTT message using global buffers */
-        ESP_ProcessMQTTMessage(g_mqtt_topic, g_mqtt_message);
+        ESP_ProcessMQTTMessage(g_mqtt_topic, g_mqtt_message+2);
         
         /* Clear message buffers after processing */
         ResetMessageBuffer();

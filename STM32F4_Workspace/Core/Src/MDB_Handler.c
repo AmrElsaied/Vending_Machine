@@ -63,6 +63,8 @@ static void MDB_RequestAck(uint8_t skip_count, Peripheral_State_t req_state);
 static void MDB_UpdateVendingItemData(uint16_t *RxBuffer);
 static void Set_CurBalance(uint8_t new_balance);
 static void Internal_VendReq_Change(vend_req_state_t state);
+static void MDB_StateChangeHandler(Peripheral_State_t old_state, Peripheral_State_t new_state);
+static void MDB_ChangeState(Peripheral_State_t new_state);
 /******************************************************************************
  *                           Public Variables                                 *
  ******************************************************************************/
@@ -101,6 +103,8 @@ Vending_Item_Data_t Vending_Item_Data;
 Peripheral_balance_t Peripheral_Balance = {244, 0, 244};
 bool Internal_VendReq_Change_flag = false;
 vend_req_state_t vend_request_current_state = VEND_REQ_STATE_IDLE; /* Current vend request state */
+uint8_t balance_setValue = 0;
+
 /******************************************************************************
  *                          Public Functions                                  *
  ******************************************************************************/
@@ -337,7 +341,7 @@ static bool MDB_ProcessAck(uint16_t word) {
     if (word == 0x0000) // ACK received
     {
         if (MDB_StateManager.Cashless_State_Change_Request) {
-            MDB_StateManager.Cashless_StateHandler = MDB_StateManager.Cashless_Req_State;
+            MDB_ChangeState(MDB_StateManager.Cashless_Req_State);
             MDB_StateManager.Cashless_State_Change_Request = false;
         }
         MDB_BusManager.ACK_Waiting = false;
@@ -588,13 +592,13 @@ static void handle_cmd_0x01E7(uint16_t *RxBuffer, uint8_t cmd_length) {
                 // Default response for inactive state
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0100;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 1;
-                MDB_StateManager.Cashless_StateHandler = STATE_RESET; // Transition to RESET state
+                MDB_ChangeState(STATE_RESET); // Transition to RESET state
                 break;
             default:
                 // Unknown state, use default response
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0100;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 1;
-                MDB_StateManager.Cashless_StateHandler = STATE_RESET; // Transition to RESET state
+                MDB_ChangeState(STATE_RESET); // Transition to RESET state
                 MDB_LOG_ERROR(MDB_ERROR_INVALID_STATE_FOR_RESET, (uint16_t)MDB_StateManager.Cashless_StateHandler, (uint8_t)cmd_index);
                 break;
         }
@@ -653,14 +657,14 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
     if (GetVendReq_State() ==  VEND_REQ_STATE_ENABLE
         && MDB_StateManager.Cashless_StateHandler == STATE_ENABLED)
     {
-        MDB_StateManager.Cashless_StateHandler = STATE_START_SESSION;
-        Set_CurBalance(135);
+        MDB_ChangeState(STATE_START_SESSION);
+        Set_CurBalance(balance_setValue);
         SetVendReq_State(VEND_REQ_STATE_IDLE);
     }
     else if (GetVendReq_State() == VEND_REQ_STATE_DISABLE
              && MDB_StateManager.Cashless_StateHandler == STATE_SESSION_IDLE)
     {
-        MDB_StateManager.Cashless_StateHandler = STATE_CANCEL_SESSION;
+        MDB_ChangeState(STATE_CANCEL_SESSION);
         SetVendReq_State(VEND_REQ_STATE_IDLE);
     }
     else
@@ -678,7 +682,7 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0000;
                 VMC_CMDs[cmd_index].CMD_Response[1] = 0x0100;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 2;
-                MDB_StateManager.Cashless_StateHandler = STATE_INIT; // Transition to INIT state
+                MDB_ChangeState(STATE_INIT); // Transition to INIT state
                 break;
             case STATE_INIT:
                 // Handle command during INIT state
@@ -742,6 +746,7 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0006;
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0106;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 2;
+                Vending_Item_Data.Vend_Item_State = VEND_ITEM_FAILURE;
                 MDB_RequestAck(1, STATE_CANCEL_SESSION);
                 break;
             case STATE_VEND_PROCESS:
@@ -807,14 +812,14 @@ static void handle_cmd_0x01D5(uint16_t *RxBuffer, uint8_t cmd_length) {
                 // Standard response in disabled state
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0100;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 1;
-                MDB_StateManager.Cashless_StateHandler = STATE_ENABLED; // Transition to ENABLED state
+                MDB_ChangeState(STATE_ENABLED); // Transition to ENABLED state
                 break;
             default:
                 // Unknown state, use default response
                 MDB_LOG_ERROR(MDB_ERROR_COMMAND_NOT_VALID_IN_STATE, (uint16_t)MDB_StateManager.Cashless_StateHandler, (uint8_t)cmd_index);
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0100;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 1;
-                MDB_StateManager.Cashless_StateHandler = STATE_ENABLED; // Transition to ENABLED state
+                MDB_ChangeState(STATE_ENABLED); // Transition to ENABLED state
                 break;
         }
         if (VMC_CMDs[cmd_index].CMD_Response_Length > 0) {
@@ -931,7 +936,7 @@ static void handle_cmd_0x0077(uint16_t *RxBuffer, uint8_t cmd_length) {
                         VMC_CMDs[cmd_index].CMD_Response[8] = 0x015C;
                         // Set the response length to 9
                         VMC_CMDs[cmd_index].CMD_Response_Length = 9;
-                        MDB_StateManager.Cashless_StateHandler = STATE_INIT; // Transition to INIT state in case it was RESET
+                        MDB_ChangeState(STATE_INIT); // Transition to INIT state in case it was RESET
                         MDB_RequestAck(1, STATE_WAIT_ACK);
                         break;
                     case 0x00FF:
@@ -1059,22 +1064,16 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response_Length = 1;
                 // Transition to vend request state
                 MDB_UpdateVendingItemData(RxBuffer);
+                Vending_Item_Data.Vend_Item_State = VEND_ITEM_FAILURE;
                 if(Vending_Item_Data.Res_Item_Price_Lbyte > Peripheral_Balance.Cur_balance)
                 {
                     // Not enough balance to vend
-                    MDB_StateManager.Cashless_StateHandler = STATE_DENY_VEND_REQ;
+                    MDB_ChangeState(STATE_DENY_VEND_REQ);
                 }
                 else
                 {
                     // Enough balance to vend
-                    MDB_StateManager.Cashless_StateHandler = STATE_APPROVE_VEND_REQ;
-                    // Prepare item data string for publishing
-                    char itemDataStr[32];  // Local variable to hold formatted data string
-                    snprintf(itemDataStr, sizeof(itemDataStr), "U:%d,ID:%d%d", 
-                             Vending_Item_Data.Res_Item_Price_Lbyte, 
-                             Vending_Item_Data.Req_Item_ID_Hbyte, 
-                             Vending_Item_Data.Req_Item_ID_Lbyte);
-                    ESP_RequestPublish(topic_handlers[ESP_TOPIC_VEND_REQUEST].topic_pattern, itemDataStr, 1);
+                    MDB_ChangeState(STATE_APPROVE_VEND_REQ);
                 }
                 break;
             case 0x00BF:
@@ -1101,9 +1100,9 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0100;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 1;
                 // Transition to session idle state
-                MDB_StateManager.Cashless_StateHandler = STATE_SESSION_IDLE;
+                MDB_ChangeState(STATE_SESSION_IDLE);
+                Vending_Item_Data.Vend_Item_State = VEND_ITEM_SUCCESS;
                 Internal_VendReq_Change(VEND_REQ_STATE_DISABLE);
-                ESP_RequestPublish(topic_handlers[ESP_TOPIC_VEND_REQUEST].topic_pattern, "Done", 1);
                 break;
             default:
                 // No other sub-commands valid in this state
@@ -1121,6 +1120,15 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0007;
                 VMC_CMDs[cmd_index].CMD_Response[1] = 0x0107;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 2;
+                // Prepare item data string for publishing
+                char itemDataStr[64];  // Local variable to hold formatted data string
+                char *status = (Vending_Item_Data.Vend_Item_State == VEND_ITEM_SUCCESS) ? "SUCCESS" : "FAILURE";
+                snprintf(itemDataStr, sizeof(itemDataStr), "U:%d,ID:%d%d,%s", 
+                            Vending_Item_Data.Res_Item_Price_Lbyte, 
+                            Vending_Item_Data.Req_Item_ID_Hbyte, 
+                            Vending_Item_Data.Req_Item_ID_Lbyte,
+                            status);
+                ESP_RequestPublish(topic_handlers[ESP_TOPIC_MAIN_PUBLISH].topic_pattern, itemDataStr, 1);
                 MDB_RequestAck(1, STATE_ENABLED);
                 break;
             default:
@@ -1164,6 +1172,30 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
 static void Internal_VendReq_Change(vend_req_state_t state){
     Internal_VendReq_Change_flag = true;
     SetVendReq_State(state);
+}
+
+/**
+ * @brief Helper function to safely change state with callback
+ */
+static void MDB_ChangeState(Peripheral_State_t new_state)
+{
+    Peripheral_State_t old_state = MDB_StateManager.Cashless_StateHandler;
+    
+    if (old_state != new_state) {
+        MDB_StateManager.Cashless_StateHandler = new_state;
+        MDB_StateChangeHandler(old_state, new_state);
+    }
+}
+
+/**
+ * @brief MDB state change handler
+ */
+static void MDB_StateChangeHandler(Peripheral_State_t old_state, Peripheral_State_t new_state)
+{
+    if (new_state == STATE_ENABLED) {
+        /* Send notification to server (optional) */
+        ESP_RequestPublish(topic_handlers[ESP_TOPIC_MAIN_PUBLISH].topic_pattern, "SYSTEM:ENABLED", 1);
+    }
 }
 /*************************** Private Functions *******************************/
 

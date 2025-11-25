@@ -49,10 +49,12 @@ static void esp_debug_print(const char *message);
 static void handle_vend_request_topic(const char* message);
 static void handle_ping_topic(const char* message);
 static void handle_unknown_topic(const char* message);
+static void handle_unknown_keyword(const char* message);
 static bool FLASH_IsErased(uint32_t addr, uint32_t size);
 static void LoadWiFiConfig(char* ssid, char* password);
 static void clear_wifi_credentials(void);
-
+static bool ESP_ParseVendAmount(const char *message, uint16_t *amount);
+static void handle_mainSubscribeTopic(const char *message);
 /******************************************************************************
  *                          Private Variables                                 *
  ******************************************************************************/
@@ -90,11 +92,17 @@ static esp_rx_state_t esp_current_state = ESP_STATE_PARSING_HEADER;
 
 /* Topic handler table - Add new topics here */
 const mqtt_topic_entry_t topic_handlers[] = {
-    {"stm32/vend_request", handle_vend_request_topic, "Vending machine request control"},
-    {"stm32/ping", handle_ping_topic, "System ping/health check"},
-	{"stm32/status", NULL, "Status updates from STM32"},  // No handler, just for publishing
-	{NULL, handle_unknown_topic, "Default handler for unregistered topics"}  /* Default handler */
+    {"stm32/main_subscribe", handle_mainSubscribeTopic, SUBSCRIBE_TOPIC, "Main subscribe topic handler"},
+	{"stm32/main_publish", NULL, PUBLISH_TOPIC, "Main publish topic handler"},
+	{NULL, handle_unknown_topic,PUBLISH_TOPIC, "Default handler for unregistered topics"}  /* Default handler */
 };
+/* Keyword handler table - Add new keywords here */
+ const mqtt_keyword_handler_t SubscribeMainTopicKeywordHandlers[] = {
+	{"Vend:", handle_vend_request_topic, "Vending machine request control"},
+	{"ping", handle_ping_topic, "System ping/health check"},
+	{"status", NULL, "Status updates from STM32"},  // No handler, just for publishing
+	{NULL, handle_unknown_keyword, "Default handler for unregistered message"}  /* Default handler */
+ };
 /******************************************************************************
  *                          Public Functions                                  *
  ******************************************************************************/
@@ -187,6 +195,9 @@ void ESP_Init(void)
 	esp_current_status = ESP_STATUS_MQTT_CONNECTED;
 	// Subscribe to topics
 	for (int i = 0; i < ESP_TOPIC_MAXNUM; i++) {
+		if (topic_handlers[i].topic_type == PUBLISH_TOPIC) {
+			continue;
+		}
 		ESP_Subscribe(topic_handlers[i].topic_pattern, 1);
 		HAL_Delay(2000);
 	}
@@ -853,9 +864,9 @@ void ESP_ProcessMQTTMessage(const char* topic, const char* message)
         return;
     }
     
-    /* Find and execute the appropriate handler */
-    const mqtt_topic_entry_t* entry = topic_handlers;
-    bool handler_found = false;
+		/* Find and execute the appropriate handler */
+		const mqtt_topic_entry_t* entry = topic_handlers;
+		bool handler_found = false;
     
     while (entry->topic_pattern != NULL) {
         if (strcmp(entry->topic_pattern, topic) == 0) {
@@ -948,17 +959,14 @@ static HAL_StatusTypeDef esp_setup_tcp_connection(void)
 	char tcp_connect_cmd[64];
 	char cipdomain_cmd[64];
 
-	//    if (ESP_SendAT("AT+CIPMODE=1", "OK", 2000) != HAL_OK) {
-	//               //esp_debug_print("[ESP] Failed to enable transparent mode\r\n");
-	//               return HAL_ERROR;
-	//           }
-
-	if (ESP_SendAT("AT+CIPSERVER=0", "OK", 2000) != HAL_OK) {
-		return HAL_ERROR;
-	}
 
 	if (ESP_SendAT("AT+CIPMUX=0", "OK", 2000) != HAL_OK) {
-		return HAL_ERROR;
+		if(ESP_SendAT("AT+CIPSERVER=0", "OK", 2000) != HAL_OK){
+			return HAL_ERROR;
+		}
+		if(ESP_SendAT("AT+CIPMUX=0", "OK", 2000) != HAL_OK){  // ✅ CHECK RETURN VALUE
+			return HAL_ERROR;
+		}
 	}
 
 	snprintf(cipdomain_cmd, sizeof(cipdomain_cmd),
@@ -1092,21 +1100,27 @@ void ResetMessageBuffer(void) {
  */
 static void handle_vend_request_topic(const char* message)
 {    
-    if (strncmp(message, "OK", 2) == 0) {
-        SetVendReq_State(VEND_REQ_STATE_ENABLE);
-        
-        // /* Optionally send confirmation back */
-        // ESP_RequestPublish("stm32/status", "VEND_ENABLED", 1);
-        
-    } else if (strncmp(message, "NK", 2) == 0) {
-        SetVendReq_State(VEND_REQ_STATE_DISABLE);
-        
-        // /* Send confirmation back */
-        // ESP_RequestPublish("stm32/status", "VEND_DISABLED", 1);
-        
+	uint16_t vend_amount = 0;
+	/* Parse the vending amount from message */
+    if (!ESP_ParseVendAmount(message, &vend_amount)) {
+        return;
     }
+	balance_setValue = (uint8_t)vend_amount;
+	SetVendReq_State(VEND_REQ_STATE_ENABLE);
 }
-
+static void handle_mainSubscribeTopic(const char *message)
+{
+	/* Find and execute the appropriate handler */
+    const mqtt_keyword_handler_t* entry = SubscribeMainTopicKeywordHandlers;
+	while (entry->keyword != NULL) {
+		if (strstr(message, entry->keyword) != NULL) {
+			/* Match found */
+			entry->handler(message);
+			break;
+		}
+		entry++;
+	}
+}
 /**
  * @brief Handle ping/health check messages
  * @param message The message payload
@@ -1114,7 +1128,7 @@ static void handle_vend_request_topic(const char* message)
 static void handle_ping_topic(const char* message)
 {
     /* Always respond to ping with pong */
-    ESP_RequestPublish(topic_handlers[ESP_TOPIC_PING].topic_pattern, "ALIVE", 1);
+    ESP_RequestPublish(topic_handlers[ESP_TOPIC_MAIN_PUBLISH].topic_pattern, "ALIVE", 1);
 }
 
 /**
@@ -1124,9 +1138,68 @@ static void handle_ping_topic(const char* message)
 static void handle_unknown_topic(const char* message)
 {    
     /* Optionally log to a debug topic */
-    ESP_RequestPublish(topic_handlers[ESP_TOPIC_STATUS].topic_pattern, "unknownTopic", 1);
+    ESP_RequestPublish(topic_handlers[ESP_TOPIC_MAIN_PUBLISH].topic_pattern, "unknownTopic", 1);
 }
 
+/**
+ * @brief Default handler for unknown topics
+ * @param message The message payload
+ */
+static void handle_unknown_keyword(const char* message)
+{    
+    /* Optionally log to a debug topic */
+    ESP_RequestPublish(topic_handlers[ESP_TOPIC_MAIN_PUBLISH].topic_pattern, "unknownTopic", 1);
+}
+/**
+ * @brief Parse vending amount from message
+ * @details Extracts numeric value from messages like "Vend:100"
+ * @param message Message string to parse
+ * @param amount Pointer to store parsed amount
+ * @return true if parsing successful, false otherwise
+ */
+static bool ESP_ParseVendAmount(const char *message, uint16_t *amount)
+{
+    if (message == NULL || amount == NULL) {
+        return false;
+    }
+    
+    /* Find the colon separator */
+    const char *colon = strchr(message, ':');
+    if (colon == NULL) {
+        return false;
+    }
+    
+    /* Move past the colon */
+    const char *amount_str = colon + 1;
+    
+    /* Skip leading whitespace */
+    while (*amount_str == ' ' || *amount_str == '\t') {
+        amount_str++;
+    }
+    
+    /* Validate that we have digits */
+    if (*amount_str < '0' || *amount_str > '9') {
+        return false;
+    }
+    
+    /* Convert string to integer */
+    char *endptr;
+    long parsed_value = strtol(amount_str, &endptr, 10);
+    
+    /* Validate conversion */
+    if (endptr == amount_str) {
+        return false;
+    }
+    
+    /* Check for valid range (0-65535 for uint16_t) */
+    if (parsed_value < 0 || parsed_value > UINT16_MAX) {
+        return false;
+    }
+    
+    /* Success */
+    *amount = (uint16_t)parsed_value;    
+    return true;
+}
 /**
  * @brief Save WiFi configuration to flash memory
  * @param ssid The WiFi SSID (max 31 chars)

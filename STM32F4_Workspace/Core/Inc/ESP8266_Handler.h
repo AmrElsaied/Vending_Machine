@@ -97,12 +97,16 @@ typedef enum {
 } esp_buffer_state;
 
 typedef enum{
-    ESP_TOPIC_VEND_REQUEST,
-    ESP_TOPIC_PING,
-    ESP_TOPIC_STATUS,
+    ESP_TOPIC_MAIN_SUBSCRIBE,
+    ESP_TOPIC_MAIN_PUBLISH,
     ESP_TOPIC_MAXNUM
 } esp_topic_index_t;
 
+typedef enum{
+    PUBLISH_TOPIC,
+    SUBSCRIBE_TOPIC,
+    MULTI_TOPIC
+}esp_topic_type_t;
 /**
  * @brief ESP publish request structure
  */
@@ -125,6 +129,21 @@ typedef struct {
     bool debug_enabled;              /* Enable/disable debug output */
 } ESP_Config_t;
 
+/**
+ * @brief MQTT message callback function type
+ * @param message The message payload
+ */
+typedef void (*mqtt_message_handler_t)(const char *message);
+
+/**
+ * @brief MQTT keyword handler entry
+ */
+typedef struct {
+    const char *keyword;                /* Keyword to search for in message */
+    mqtt_message_handler_t handler;     /* Handler function for this keyword */
+    const char *description;            /* Description for documentation */
+} mqtt_keyword_handler_t;
+
 
 /**
  * @brief Function pointer type for MQTT topic handlers
@@ -139,6 +158,7 @@ typedef void (*mqtt_topic_handler_t)(const char* message);
 typedef struct {
     const char* topic_pattern;          /* Topic string or pattern */
     mqtt_topic_handler_t handler;       /* Function to handle this topic */
+    esp_topic_type_t topic_type;        /* Type of topic: publish, subscribe, multi */
     const char* description;            /* Human-readable description */
 } mqtt_topic_entry_t;
 

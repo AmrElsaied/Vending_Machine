@@ -19,11 +19,11 @@
 
 /* STM32F401CC Flash memory layout */
 #define FLASH_BASE_ADDR              0x08000000U      /* Flash base address */
-#define FLASH_USER_START_ADDR        0x08070000U      /* User data area start (192 KB) */
-#define FLASH_USER_END_ADDR          0x0807FFFFU      /* User data area end (256 KB) */
+#define FLASH_USER_START_ADDR        0x08010000U      /* User data area start (64 KB) */
+#define FLASH_USER_END_ADDR          0x0801FFFFU      /* User data area end (128 KB) */
 
 /* Configuration storage offsets */
-#define FLASH_CONFIG_ADDR            0x08070000U      /* WiFi & MQTT config */
+#define FLASH_CONFIG_ADDR            0x08010000U      /* WiFi & MQTT config */
 
 
 /* Operation status codes */

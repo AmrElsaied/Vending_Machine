@@ -69,7 +69,10 @@ typedef enum {
     CMD_RX_DONE,            /* Command has been fully received */
     CMD_RX_BUSY             /* Command is busy being processed */
 } CMD_RX_State;
-
+typedef enum {
+    VEND_ITEM_SUCCESS = 0,  /* Vend item successfully */
+    VEND_ITEM_FAILURE,      /* Vend item failed */
+} vend_item_state_t;
 typedef struct {
     uint16_t buf[MDB_RING_LEN];      /* storage                       */
     volatile uint16_t wr;            /* write index  (ISR)            */
@@ -83,6 +86,7 @@ typedef struct{
     uint8_t Req_Item_ID_Lbyte;
     uint8_t Res_Item_Price_Hbyte;
     uint8_t Res_Item_Price_Lbyte;
+    vend_item_state_t Vend_Item_State;
 }Vending_Item_Data_t;
 
 typedef struct{
@@ -138,6 +142,7 @@ extern MDB_Config_t mdb_config;                         /* MDB configuration str
 extern MDB_StateManager_t MDB_StateManager;             /* State manager for MDB protocol */
 extern MDB_BusManager_t MDB_BusManager;                 /* Bus manager for MDB protocol */
 extern vend_req_state_t vend_request_current_state;     /* Current vend request state */
+extern uint8_t balance_setValue;                         /* Balance set value */
 /******************************************************************************
  *                              Public API                                    *
  ******************************************************************************/
