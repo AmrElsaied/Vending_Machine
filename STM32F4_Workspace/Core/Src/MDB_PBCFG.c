@@ -52,5 +52,4 @@ extern UART_HandleTypeDef huart1;
 MDB_Config_t mdb_config = {
     .mdb_uart = &huart1,                /* MDB bus communication UART */
     .bus_timeout = MDB_BUS_TIMEOUT,     /* MDB bus timeout in milliseconds */
-    .debug_enabled = false              /* Enable debug output by default */
 };

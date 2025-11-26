@@ -42,7 +42,6 @@
  *                         Private Prototypes                                 *
  ******************************************************************************/
 static void esp_drain_rx_buffer(void);
-static void esp_debug_print(const char *message);
 
 static void handle_vend_request_topic(const char* message);
 static void handle_ping_topic(const char* message);
@@ -79,9 +78,7 @@ ESP_Config_t esp_config = {
 		.mqtt_broker_ip = ESP_DEFAULT_MQTT_BROKER,
 		.mqtt_broker_port = ESP_DEFAULT_MQTT_PORT,
 		.mqtt_client_id = ESP_DEFAULT_CLIENT_ID,
-		.esp_uart = NULL,          /* Will be set via ESP_SetConfig() */
-		.debug_uart = NULL,         /* Will be set via ESP_SetConfig() */
-		.debug_enabled = false              /* Enable debug output by default */
+		.esp_uart = NULL          /* Will be set via ESP_SetConfig() */
 };
 
 
@@ -158,7 +155,6 @@ void ESP_Init(void)
 	// Validate configuration
 	if (esp_config.esp_uart == NULL) {
 		esp_current_status = ESP_STATUS_ERROR;
-		//esp_debug_print("[ESP] Error: ESP UART handle not configured. Call ESP_SetConfig() first.\r\n");
 		return;
 	}
 
@@ -210,13 +206,11 @@ void ESP_Init(void)
 HAL_StatusTypeDef ESP_SendAT(const char *cmd, const char *expect, uint32_t timeout)
 {
 	if (esp_config.esp_uart == NULL) {
-		//esp_debug_print("[ESP] UART not initialized\r\n");
 		return HAL_ERROR;
 	}
 
 	// Validate inputs
 	if (cmd == NULL || *cmd == '\0') {
-		//esp_debug_print("[ESP] Invalid command\r\n");
 		return HAL_ERROR;
 	}
 
@@ -232,16 +226,11 @@ HAL_StatusTypeDef ESP_SendAT(const char *cmd, const char *expect, uint32_t timeo
 	char atCommand[128];
 	int cmd_len = snprintf(atCommand, sizeof(atCommand), "%s\r\n", cmd);
 	if (cmd_len < 0 || (size_t)cmd_len >= sizeof(atCommand)) {
-		//esp_debug_print("[ESP] Command too long\r\n");
 		return HAL_ERROR;
 	}
 
-	//esp_debug_print("[ESP] Sending: ");
-	//esp_debug_print(atCommand);
-
 	// Transmit command
 	if (HAL_UART_Transmit(esp_config.esp_uart, (uint8_t *)atCommand, (uint16_t)cmd_len, HAL_MAX_DELAY) != HAL_OK) {
-		//esp_debug_print("[ESP] Transmit failed\r\n");
 		return HAL_ERROR;
 	}
 
@@ -265,7 +254,6 @@ HAL_StatusTypeDef ESP_SendAT(const char *cmd, const char *expect, uint32_t timeo
 				// Check for busy response (only check recent characters to avoid scanning entire buffer)
 				if (idx >= busy_len &&
 						memcmp(&esp_response_buffer[idx - busy_len], busy_str, busy_len) == 0) {
-					//esp_debug_print("[ESP] Module busy, retrying...\r\n");
 					HAL_Delay(busy_delay_ms);
 
 					// Reset for retry
@@ -275,7 +263,6 @@ HAL_StatusTypeDef ESP_SendAT(const char *cmd, const char *expect, uint32_t timeo
 
 					// Retransmit command
 					if (HAL_UART_Transmit(esp_config.esp_uart, (uint8_t *)atCommand, (uint16_t)cmd_len, HAL_MAX_DELAY) != HAL_OK) {
-						//esp_debug_print("[ESP] Retransmit failed\r\n");
 						return HAL_ERROR;
 					}
 					continue;
@@ -286,9 +273,7 @@ HAL_StatusTypeDef ESP_SendAT(const char *cmd, const char *expect, uint32_t timeo
 					// Only search the recent portion where the response could be
 					size_t search_start = (idx > expect_len + 32) ? idx - expect_len - 32 : 0;
 					if (strstr(&esp_response_buffer[search_start], expect) != NULL) {
-						char dbg[64];
-						snprintf(dbg, sizeof(dbg), "[ESP] Matched ACK: %s\r\n", expect);
-						//esp_debug_print(dbg);
+
 						found = true;
 						// Don't break - continue to collect remaining data
 					}
@@ -312,21 +297,12 @@ HAL_StatusTypeDef ESP_SendAT(const char *cmd, const char *expect, uint32_t timeo
 		}
 	}
 
-	// Print response if we have data
-	if (idx > 0) {
-		//esp_debug_print("[ESP] Raw Response:\r\n");
-		//esp_debug_print(esp_response_buffer);
-	} else {
-		//esp_debug_print("[ESP] No response received\r\n");
-	}
-
 	// Evaluate result
 	if (found) {
 		return HAL_OK;
 	} else if (idx == 0) {
 		return HAL_TIMEOUT;
 	} else {
-		//esp_debug_print("[ESP] Response didn't match expected pattern\r\n");
 		return HAL_ERROR;
 	}
 }
@@ -335,12 +311,10 @@ HAL_StatusTypeDef ESP_SendBinary(uint8_t *bin, size_t len, const char *expect, u
 {
 
 	if (esp_config.esp_uart == NULL) {
-		//esp_debug_print("[ESP] UART not initialized\r\n");
 		return HAL_ERROR;
 	}
 
 	if (bin == NULL && len > 0) {
-		//esp_debug_print("[ESP] Invalid binary data\r\n");
 		return HAL_ERROR;
 	}
 
@@ -357,14 +331,8 @@ HAL_StatusTypeDef ESP_SendBinary(uint8_t *bin, size_t len, const char *expect, u
 
 	// Transmit binary data
 	if (len > 0) {
-		//esp_debug_print("[ESP] Sending Binary Packet (");
-
-		char len_msg[32];
-		snprintf(len_msg, sizeof(len_msg), "%lu bytes)\r\n", (unsigned long)len);
-		//esp_debug_print(len_msg);
 
 		if (HAL_UART_Transmit(esp_config.esp_uart, bin, len, HAL_MAX_DELAY) != HAL_OK) {
-			//esp_debug_print("[ESP] Binary transmit failed\r\n");
 			return HAL_ERROR;
 		}
 	}
@@ -377,18 +345,10 @@ HAL_StatusTypeDef ESP_SendBinary(uint8_t *bin, size_t len, const char *expect, u
 			esp_binary_rx_buffer[idx++] = ch;
 			esp_binary_rx_buffer[idx] = '\0'; // Keep string safe for strstr
 
-			// Debug print (optional - can be disabled for production)
-#if ESP_DEBUG_VERBOSE
-			char dbg[16];
-			snprintf(dbg, sizeof(dbg), "[BIN] 0x%02X\r\n", ch);
-			//esp_debug_print(dbg);
-#endif
-
 			// Only check for patterns when we have enough data
 			if (idx >= error_len) {
 				// Check for ERROR response first (highest priority)
 				if (memcmp(&esp_binary_rx_buffer[idx - error_len], error_str, error_len) == 0) {
-					//esp_debug_print("[ESP] Link Error: Disconnected\r\n");
 					return HAL_ERROR;
 				}
 
@@ -397,9 +357,6 @@ HAL_StatusTypeDef ESP_SendBinary(uint8_t *bin, size_t len, const char *expect, u
 					// Search only the recent portion of the buffer
 					size_t search_start = (idx > expect_len + 16) ? idx - expect_len - 16 : 0;
 					if (strstr((char *)&esp_binary_rx_buffer[search_start], expect) != NULL) {
-						char dbg_ack[64];
-						snprintf(dbg_ack, sizeof(dbg_ack), "[ESP] Matched ACK: %s\r\n", expect);
-						//esp_debug_print(dbg_ack);
 						found = true;
 
 						// Continue to collect any remaining data but with shorter timeout
@@ -412,26 +369,12 @@ HAL_StatusTypeDef ESP_SendBinary(uint8_t *bin, size_t len, const char *expect, u
 
 	// Evaluate result
 	if (found) {
-		//esp_debug_print("[ESP] Binary Response OK\r\n");
-#if ESP_DEBUG_VERBOSE
-		//esp_debug_print("Response: ");
-		//esp_debug_print((char *)esp_binary_rx_buffer);
-		//esp_debug_print("\r\n");
-#endif
 		return HAL_OK;
 	}
 
 	if (idx == 0) {
-		//esp_debug_print("[ESP] No response received (timeout)\r\n");
 		return HAL_TIMEOUT;
 	}
-
-	//esp_debug_print("[ESP] Timeout or No ACK\r\n");
-#if ESP_DEBUG_VERBOSE
-	//esp_debug_print("Received: ");
-	//esp_debug_print((char *)esp_binary_rx_buffer);
-	//esp_debug_print("\r\n");
-#endif
 
 	return HAL_ERROR;
 }
@@ -452,7 +395,6 @@ ESP_Status_t ESP_GetStatus(void)
  */
 void ESP_Publish(const char *topic, const char *message, uint8_t qos)
 {
-	//esp_debug_print("[ESP_PUBLISH] >>> Entering ESP_Publish()\r\n");
 	HAL_UART_AbortReceive(esp_config.esp_uart);
 	// NOTE: Changed esp_config.esp_uart to esp_config_uart for global pointer compatibility.
 	if (esp_config.esp_uart == NULL || topic == NULL || message == NULL)
@@ -496,7 +438,6 @@ void ESP_Publish(const char *topic, const char *message, uint8_t qos)
 	char cipsendCmd[32];
 	sprintf(cipsendCmd, "AT+CIPSEND=%d", index);
 
-	//esp_debug_print("[ESP_PUBLISH] Sending AT+CIPSEND command...\r\n");
 	// Uses the synchronous ESP_SendAT
 	if (ESP_SendAT(cipsendCmd, ">", 2000) != HAL_OK)
 	{
@@ -504,17 +445,14 @@ void ESP_Publish(const char *topic, const char *message, uint8_t qos)
 		return;
 	}
 
-	//esp_debug_print("[ESP_PUBLISH] Sending MQTT PUBLISH packet...\r\n");
 	// NOTE: Changed esp_config.esp_uart to esp_config_uart
 	HAL_UART_Transmit(esp_config.esp_uart, packet, index, HAL_MAX_DELAY);
-	//esp_debug_print("[ESP_PUBLISH] MQTT PUBLISH packet sent\r\n");
 
 	// --- Wait for PUBACK if QoS = 1 ---
 	if (qos == 1)
 	{
 		uint8_t rx_byte;
 		uint32_t start_tick = HAL_GetTick();
-		//esp_debug_print("[ESP_PUBLISH] Waiting for PUBACK (0x40)...\r\n");
 
 		while (HAL_GetTick() - start_tick < 5000)  // 5 sec timeout
 		{
@@ -523,18 +461,13 @@ void ESP_Publish(const char *topic, const char *message, uint8_t qos)
 			{
 				if (rx_byte == 0x40)
 				{
-					//esp_debug_print("[ESP_PUBLISH] PUBACK received!\r\n");
 					ESP_StartUARTReceive();
-					//esp_debug_print("[ESP_PUBLISH] <<< Exiting ESP_Publish()\r\n");
 					return;
 				}
 			}
 		}
 		ESP_LOG_CRITICAL_ERROR(ESP_SERVER_ERROR_LOSE_CONNECTION, (uint8_t)ESP_ERROR_TIMEOUT, (uint8_t)PUBLISH_TOPIC);
 	}
-
-	//esp_debug_print("[ESP_PUBLISH] <<< Exiting ESP_Publish() without cleanup or re-arming ASYNC\r\n");
-
 }
 
 
@@ -546,13 +479,11 @@ HAL_StatusTypeDef ESP_Subscribe(const char *topic, uint8_t qos)
 {
     // --- 1. Input Validation ---
 	if (esp_config.esp_uart == NULL || topic == NULL) {
-		//esp_debug_print("[ESP] Invalid parameters for SUBSCRIBE\r\n");
 		return HAL_ERROR;
 	}
 
 	uint16_t topic_len = strlen(topic);
 	if (topic_len == 0) {
-		//esp_debug_print("[ESP] Empty topic for SUBSCRIBE\r\n");
 		return HAL_ERROR;
 	}
 
@@ -570,7 +501,6 @@ HAL_StatusTypeDef ESP_Subscribe(const char *topic, uint8_t qos)
 
 	// Check if packet fits in buffer (Fixed Header size is 2 bytes for single-byte RL)
 	if (remaining_length + 2 > 256) {
-		//esp_debug_print("[ESP] Topic too long for SUBSCRIBE\r\n");
 		return HAL_ERROR;
 	}
 
@@ -633,19 +563,11 @@ HAL_StatusTypeDef ESP_Subscribe(const char *topic, uint8_t qos)
         // 2. State Clearance Delay: Give the ESP module a small, fixed delay
         // to complete its internal processing of the received SUBACK packet.
         HAL_Delay(500); // 500ms is a safe buffer
-
-		char success_msg[128];
-		snprintf(success_msg, sizeof(success_msg), "[ESP] SUBSCRIBE sent for topic: %s (ID: %d). State cleared.\r\n",
-				topic, message_id);
-		//esp_debug_print(success_msg);
-		//ESP_StartUARTReceive(); // Re-enable general receive if necessary
-
         // If you implement ESP_WaitForSUBACK, return its result here.
-	} else {
-		char error_msg[128];
-		snprintf(error_msg, sizeof(error_msg), "[ESP] SUBSCRIBE send failed to topic: %s (error: %d)\r\n",
-				topic, ret);
-		//esp_debug_print(error_msg);
+	}
+	 else {
+		// Handle error case if needed
+		ESP_LOG_CRITICAL_ERROR(ESP_SERVER_ERROR_LOSE_CONNECTION, (uint8_t)ESP_ERROR_INVALID_CMD_RESPONSE, (uint8_t)SUBSCRIBE_TOPIC);
 	}
 	return ret;
 }
@@ -671,11 +593,9 @@ void ESP_UART_RxCallback(UART_HandleTypeDef *huart)
 
 		bool parse_ok = true;
 
-		//esp_debug_print("\r\n--- Starting Payload Parsing ---\r\n");
 
 		// 1. Ignore the first two bytes and check length
 		if (current_payload_len < 4) {
-			//esp_debug_print("[ESP] Error: Payload too short for Topic/Message parsing.\r\n");
 			parse_ok = false;
 		}
 
@@ -692,7 +612,6 @@ void ESP_UART_RxCallback(UART_HandleTypeDef *huart)
 
 			// 3. Validate Topic Length against remaining payload
 			if (current_payload_len < topic_len) {
-				//esp_debug_print("[ESP] Error: Topic length exceeds remaining payload data.\r\n");
 				parse_ok = false;
 			}
 
@@ -703,7 +622,6 @@ void ESP_UART_RxCallback(UART_HandleTypeDef *huart)
 
 				// Safety check: Truncate topic if it exceeds global buffer size
 				if (copy_len >= MAX_TOPIC_BUFFER_SIZE) {
-					//esp_debug_print("[ESP] Warning: Topic truncated due to buffer limit.\r\n");
 					copy_len = MAX_TOPIC_BUFFER_SIZE - 1;
 				}
 
@@ -712,9 +630,6 @@ void ESP_UART_RxCallback(UART_HandleTypeDef *huart)
 				memcpy(g_mqtt_topic, payload_ptr, copy_len);
 				g_mqtt_topic[copy_len] = '\0'; // Null-terminate the global buffer
 
-//				char dbg[128];
-//				snprintf(dbg, sizeof(dbg), "[ESP] Detected Topic: %s (Length: %u)\r\n", g_mqtt_topic, topic_len);
-				//esp_debug_print(dbg);
 
 				payload_ptr += topic_len; // Move past the original topic string length
 				current_payload_len -= topic_len;
@@ -738,16 +653,14 @@ void ESP_UART_RxCallback(UART_HandleTypeDef *huart)
 
 
 				} else if (message_len == 0) {
-					//esp_debug_print("[ESP] Detected Message: (Empty)\r\n");
 					// If you want to re-publish empty messages, the call would go here as well.
 				} else {
-					//esp_debug_print("[ESP] Error: Message length too large or invalid.\r\n");
+					//[ESP] Error: Message length too large or invalid;
 				}
 			} // Now g_mqtt_topic and g_mqtt_message persist
 		}
 
 		// --- Cleanup and State Reset (Always executed after payload completion) ---
-		//esp_debug_print("--- Payload Parse Complete ---\r\n");
 
 		esp_expected_len = 0;
 		esp_current_state = ESP_STATE_PARSING_HEADER;
@@ -829,7 +742,6 @@ void ESP_StartUARTReceive(void)
 {
 	if (esp_config.esp_uart == NULL)
 	{
-		//esp_debug_print("[ESP] Error: UART handle NULL in Start\r\n");
 		return;
 	}
 
@@ -838,13 +750,7 @@ void ESP_StartUARTReceive(void)
 	esp_rx_head = 0;
 	esp_rx_tail = 0;
 
-	if (HAL_UART_Receive_IT(esp_config.esp_uart, &esp_rx_byte, 1) != HAL_OK)
-	{
-		//esp_debug_print("[ESP] Failed to start RX interrupt\r\n");
-	}
-	else{
-		//esp_debug_print("[ESP] UART receive interrupt started\r\n");
-	}
+	HAL_UART_Receive_IT(esp_config.esp_uart, &esp_rx_byte, 1);
 }
 
 
@@ -1011,45 +917,17 @@ HAL_StatusTypeDef esp_send_mqtt_connect_packet(void)
 	char cipsendCmd[32];
 	sprintf(cipsendCmd, "AT+CIPSEND=%d", (int)sizeof(mqttConnect));
 
-	//esp_debug_print("[ESP] Preparing MQTT CONNECT packet...\r\n");
-
 	// Step 1: Send AT+CIPSEND and wait for '>'
 	if (ESP_SendAT(cipsendCmd, ">", 5000) != HAL_OK) {
-		//esp_debug_print("[ESP] AT+CIPSEND failed (no '>')\r\n");
 		return HAL_ERROR;
 	}
 
 	// Step 2: Send MQTT CONNECT packet using the binary sender
 	if (ESP_SendBinary((uint8_t *)mqttConnect, sizeof(mqttConnect), "\x20", 8000) != HAL_OK) {
-		//esp_debug_print("[ESP] MQTT CONNECT send failed or CONNACK not received\r\n");
 		return HAL_ERROR;
 	}
 
-	//esp_debug_print("[ESP] MQTT CONNECT packet sent successfully and CONNACK detected\r\n");
 	return HAL_OK;
-}
-
-
-
-
-
-/**
- * @brief Print debug message to debug UART
- * 
- * @details Sends debug message to UART2 for monitoring and troubleshooting.
- *          This function is used throughout the ESP8266 handler for providing
- *          detailed operation feedback.
- *
- * @param message Null-terminated string to print
- *
- * @note Debug output can be disabled by setting ESP_ENABLE_DEBUG_OUTPUT to 0
- *       in the module configuration section.
- */
-static void esp_debug_print(const char *message)
-{
-	if (esp_config.debug_enabled && esp_config.debug_uart != NULL) {
-		HAL_UART_Transmit(esp_config.debug_uart, (uint8_t *)message, strlen(message), HAL_MAX_DELAY);
-	}
 }
 
 
@@ -1386,9 +1264,6 @@ HAL_StatusTypeDef ESP_WaitForCredentials(void)
 			}
 			else
 			{
-				/* Buffer full: Reset the buffer and state */
-				// snprintf(debug_msg, sizeof(debug_msg), "[FAIL] RX Buffer overflow at index %lu. Resetting.\r\n", (unsigned long)idx);
-				// esp_debug_print(debug_msg);
 				idx = 0;
 				rxbuf[0] = '\0';
 				state = STATE_WAIT_IPD;
@@ -1429,7 +1304,6 @@ HAL_StatusTypeDef ESP_WaitForCredentials(void)
 						bytes_to_read--;
 					}
 				}
-				// esp_debug_print("[SUCCESS] Found +IPD header. Transitioning to PARSE_HEADER.\r\n");
 			}
 			break;
 		}
@@ -1462,9 +1336,6 @@ HAL_StatusTypeDef ESP_WaitForCredentials(void)
 			expected_len = payload_len;
 			payload_start_offset = (endptr + 1) - rxbuf;
 
-			// snprintf(debug_msg, sizeof(debug_msg), "[SUCCESS] Header complete: ID=%ld, Length=%ld. Transitioning to WAIT_PAYLOAD.\r\n", link_id, expected_len);
-			// esp_debug_print(debug_msg);
-
 			state = STATE_WAIT_PAYLOAD;
 			break;
 		}
@@ -1478,9 +1349,6 @@ HAL_StatusTypeDef ESP_WaitForCredentials(void)
 			{
 				char *payload = rxbuf + payload_start_offset;
 				payload[expected_len] = '\0';
-
-				// snprintf(debug_msg, sizeof(debug_msg), "[SUCCESS] Full payload received (%ld bytes): %s\r\n", received_len, payload);
-				// esp_debug_print(debug_msg);
 
 				/* --- FINAL PARSING: SSID:PASS --- */
 				char *sep = strchr(payload, ':');

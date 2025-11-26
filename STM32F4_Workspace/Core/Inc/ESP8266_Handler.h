@@ -131,8 +131,6 @@ typedef struct {
     uint16_t mqtt_broker_port;       /* MQTT broker port */
     char mqtt_client_id[16];         /* MQTT client identifier */
     UART_HandleTypeDef *esp_uart;    /* ESP8266 UART handle pointer */
-    UART_HandleTypeDef *debug_uart;  /* Debug UART handle pointer */
-    bool debug_enabled;              /* Enable/disable debug output */
 } ESP_Config_t;
 
 /**

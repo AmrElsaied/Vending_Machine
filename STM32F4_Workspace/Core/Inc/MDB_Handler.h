@@ -126,7 +126,6 @@ typedef struct {
 typedef struct {
     UART_HandleTypeDef *mdb_uart;       /* MDB bus UART handle pointer */
     uint32_t bus_timeout;                  /* MDB bus timeout in milliseconds */
-    bool debug_enabled;                    /* Enable/disable debug output */
 } MDB_Config_t;
 
 typedef enum {
