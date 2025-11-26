@@ -54,6 +54,10 @@ typedef enum {
     MDB_ERROR_BALANCE_EXCEEDS_MAXIMUM = 0x08, /* Balance exceeds Max_balance limit */
     SYSTASK_ERROR_TASK_CREATION_FAILED = 0x09,    /* FreeRTOS task creation failed */
     SYSTASK_ERROR_QUEUE_CREATION_FAILED = 0x0A,   /* FreeRTOS queue creation failed */
+    ESP_WIFI_ERROR_CONNECTION_FAILED = 0x0B,      /* WiFi connection failed */
+    ESP_TCP_ERROR_CONNECTION_FAILED = 0x0C,       /* TCP connection to broker failed */
+    ESP_MQTT_ERROR_CONNECTION_FAILED = 0x0D,       /* MQTT connection failed */
+    ESP_SERVER_ERROR_LOSE_CONNECTION = 0x0E,        /* MQTT server disconnected unexpectedly */
     MAX_ERROR_CODE_NUMBER
  }Error_code_t;
 /******************************************************************************

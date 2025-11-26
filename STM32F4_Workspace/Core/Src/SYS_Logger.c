@@ -23,7 +23,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
-
+#include "LED_Controller.h"
+#include "ESP8266_Handler.h"
 /******************************************************************************
  *                             Module Config                                  *
  ******************************************************************************/
@@ -31,7 +32,6 @@
 /******************************************************************************
  *                            Private Macros                                  *
  ******************************************************************************/
-#define CRITICAL_ERROR_RESET_THRESHOLD  10      /* Reset system after this many critical errors */
 
 /******************************************************************************
  *                         Private Data Types                                 *
@@ -56,7 +56,11 @@ Critical_Error_logger_t Critical_Error_Logger[MAX_ERROR_CODE_NUMBER] = {
     {MDB_ERROR_UNEXPECTED_ACK_WORD, 0, 3},
     {MDB_ERROR_BALANCE_EXCEEDS_MAXIMUM, 0, 3},
     {SYSTASK_ERROR_TASK_CREATION_FAILED, 0, 1},
-    {SYSTASK_ERROR_QUEUE_CREATION_FAILED, 0, 1}
+    {SYSTASK_ERROR_QUEUE_CREATION_FAILED, 0, 1},
+    {ESP_WIFI_ERROR_CONNECTION_FAILED, 0, 1},
+    {ESP_TCP_ERROR_CONNECTION_FAILED, 0, 1},
+    {ESP_MQTT_ERROR_CONNECTION_FAILED, 0, 1},
+    {ESP_SERVER_ERROR_LOSE_CONNECTION, 0, 4}
 };
 /******************************************************************************
  *                         Private Prototypes                                 *
@@ -340,10 +344,48 @@ static void SYS_HandleCriticalErrorAction(Error_code_t error_code) {
     // Handle specific critical error actions
     switch (error_code) {
         case SYSTASK_ERROR_TASK_CREATION_FAILED:
-            while(1); // Halt system
-            break;
         case SYSTASK_ERROR_QUEUE_CREATION_FAILED:
-            while(1); // Halt system
+            while(1){ // Halt system
+                LED_Toggle(LED_CHANNEL_DIAG);
+                HAL_Delay(500);
+            }
+            break;
+        case ESP_WIFI_ERROR_CONNECTION_FAILED:
+            // Attempt to reset WiFi module or reinitialize
+            if (esp_setup_wifi_connection() != HAL_OK) {
+                while(1){ // Halt if still failing
+                    LED_Toggle(LED_CHANNEL_DIAG);
+                    HAL_Delay(500);
+                }
+            }
+            break;
+        case ESP_TCP_ERROR_CONNECTION_FAILED:
+            // Attempt to reset TCP connection
+            if (esp_setup_tcp_connection() != HAL_OK) {
+                while(1){ // Halt if still failing
+                    LED_Toggle(LED_CHANNEL_DIAG);
+                    HAL_Delay(500);
+                }
+            }
+            break;
+        case ESP_MQTT_ERROR_CONNECTION_FAILED:
+            // Attempt to resend MQTT connect packet
+            if (esp_send_mqtt_connect_packet() != HAL_OK) {
+                while(1){ // Halt if still failing
+                    LED_Toggle(LED_CHANNEL_DIAG);
+                    HAL_Delay(500);
+                }
+            }
+            break;
+        case ESP_SERVER_ERROR_LOSE_CONNECTION:
+            // Attempt to reconnect to MQTT server
+            ESP_Init();
+            if (esp_current_status != ESP_STATUS_MQTT_CONNECTED) {
+                while(1){ // Halt if still failing
+                    LED_Toggle(LED_CHANNEL_DIAG);
+                    HAL_Delay(500);
+                }
+            }
             break;
         default:
             // General critical error handling

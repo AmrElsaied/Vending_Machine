@@ -21,6 +21,7 @@
 #include "MDB_Handler.h"
 #include "Flash_Driver.h"
 #include "LED_Controller.h"
+#include "SYS_Logger.h"
 /******************************************************************************
  *                             Module Config                                  *
  ******************************************************************************/
@@ -41,9 +42,6 @@
  *                         Private Prototypes                                 *
  ******************************************************************************/
 static void esp_drain_rx_buffer(void);
-static HAL_StatusTypeDef esp_setup_wifi_connection(void);
-static HAL_StatusTypeDef esp_setup_tcp_connection(void);
-static HAL_StatusTypeDef esp_send_mqtt_connect_packet(void);
 static void esp_debug_print(const char *message);
 
 static void handle_vend_request_topic(const char* message);
@@ -72,7 +70,7 @@ static volatile uint16_t esp_rx_tail = 0;
 static volatile uint16_t esp_uart_rx_index = 0;
 
 static char esp_response_buffer[ESP_RESPONSE_BUFFER_SIZE];
-static ESP_Status_t esp_current_status = ESP_STATUS_UNINITIALIZED;
+ESP_Status_t esp_current_status = ESP_STATUS_UNINITIALIZED;
 vend_req_state_t esp_vend_current_state = VEND_REQ_STATE_IDLE;
 
 ESP_Config_t esp_config = {
@@ -134,27 +132,28 @@ ESP_Config_t* ESP_GetConfig(void)
  */
 void ESP_Init(void)
 {
-//	LED_On(LED_CHANNEL_COMM); // Indicate initialization start
-//	clear_wifi_credentials();
-//	LoadWiFiConfig(ESP8266_DefaultConfig.wifi_ssid, ESP8266_DefaultConfig.wifi_password);
+	esp_current_status = ESP_STATUS_UNINITIALIZED;
+	LED_On(LED_CHANNEL_COMM); // Indicate initialization start
+	clear_wifi_credentials();
+	LoadWiFiConfig(ESP8266_DefaultConfig.wifi_ssid, ESP8266_DefaultConfig.wifi_password);
 	// Set the configuration with the default configuration
 	ESP_SetConfig(&ESP8266_DefaultConfig);
 	// Check if WiFi credentials are unconfigured
-//	if (strcmp(ESP8266_DefaultConfig.wifi_ssid, ESP_DEFAULT_UNCONFIGURED_SSID) == 0 ||
-//		strcmp(ESP8266_DefaultConfig.wifi_password, ESP_DEFAULT_UNCONFIGURED_PASSWORD) == 0) {
-//		esp_current_status = ESP_STATUS_CONFIGURING;
-//		// will be asked to configure via HTTP requests through the application
-//		//Start the Access Point mode
-//		ESP_AP_Mode();
-//		// Get the SSID and Password from the user via HTTP server
-//		clear_wifi_credentials();
-//		ESP_WaitForCredentials();
-//		// Store the new credentials in flash
-//		SaveWiFiConfig(ESP8266_DefaultConfig.wifi_ssid, ESP8266_DefaultConfig.wifi_password);
-//		//Reset the CPU
-//		HAL_NVIC_SystemReset();
-//		return;
-//	}
+	if (strcmp(ESP8266_DefaultConfig.wifi_ssid, ESP_DEFAULT_UNCONFIGURED_SSID) == 0 ||
+		strcmp(ESP8266_DefaultConfig.wifi_password, ESP_DEFAULT_UNCONFIGURED_PASSWORD) == 0) {
+		esp_current_status = ESP_STATUS_CONFIGURING;
+		// will be asked to configure via HTTP requests through the application
+		//Start the Access Point mode
+		ESP_AP_Mode();
+		// Get the SSID and Password from the user via HTTP server
+		clear_wifi_credentials();
+		ESP_WaitForCredentials();
+		// Store the new credentials in flash
+		SaveWiFiConfig(ESP8266_DefaultConfig.wifi_ssid, ESP8266_DefaultConfig.wifi_password);
+		//Reset the CPU
+		HAL_NVIC_SystemReset();
+		return;
+	}
 	HAL_Delay(2000);
 	// Validate configuration
 	if (esp_config.esp_uart == NULL) {
@@ -176,20 +175,17 @@ void ESP_Init(void)
 
 	// Setup WiFi connection
 	if (esp_setup_wifi_connection() != HAL_OK) {
-		esp_current_status = ESP_STATUS_ERROR;
-		return;
+		ESP_LOG_CRITICAL_ERROR(ESP_WIFI_ERROR_CONNECTION_FAILED, NO_DATA_PRESENT, NO_CONTEXT_PRESENT);
 	}
 
 	// Setup TCP connection to MQTT broker
 	if (esp_setup_tcp_connection() != HAL_OK) {
-		esp_current_status = ESP_STATUS_ERROR;
-		return;
+		ESP_LOG_CRITICAL_ERROR(ESP_TCP_ERROR_CONNECTION_FAILED, NO_DATA_PRESENT, NO_CONTEXT_PRESENT);
 	}
 
 	// Setup MQTT connection
 	if (esp_send_mqtt_connect_packet() != HAL_OK) {
-		esp_current_status = ESP_STATUS_ERROR;
-		return;
+		ESP_LOG_CRITICAL_ERROR(ESP_MQTT_ERROR_CONNECTION_FAILED, NO_DATA_PRESENT, NO_CONTEXT_PRESENT);
 	}
 
 	esp_current_status = ESP_STATUS_MQTT_CONNECTED;
@@ -461,7 +457,6 @@ void ESP_Publish(const char *topic, const char *message, uint8_t qos)
 	// NOTE: Changed esp_config.esp_uart to esp_config_uart for global pointer compatibility.
 	if (esp_config.esp_uart == NULL || topic == NULL || message == NULL)
 	{
-		//esp_debug_print("[ESP_PUBLISH] ERROR: Invalid argument(s)\r\n");
 		return;
 	}
 
@@ -505,7 +500,7 @@ void ESP_Publish(const char *topic, const char *message, uint8_t qos)
 	// Uses the synchronous ESP_SendAT
 	if (ESP_SendAT(cipsendCmd, ">", 2000) != HAL_OK)
 	{
-		//esp_debug_print("[ESP_PUBLISH] ERROR: Failed to get '>' prompt\r\n");
+		ESP_LOG_CRITICAL_ERROR(ESP_SERVER_ERROR_LOSE_CONNECTION, (uint8_t)ESP_ERROR_INVALID_CMD_RESPONSE, (uint8_t)PUBLISH_TOPIC);
 		return;
 	}
 
@@ -535,6 +530,7 @@ void ESP_Publish(const char *topic, const char *message, uint8_t qos)
 				}
 			}
 		}
+		ESP_LOG_CRITICAL_ERROR(ESP_SERVER_ERROR_LOSE_CONNECTION, (uint8_t)ESP_ERROR_TIMEOUT, (uint8_t)PUBLISH_TOPIC);
 	}
 
 	//esp_debug_print("[ESP_PUBLISH] <<< Exiting ESP_Publish() without cleanup or re-arming ASYNC\r\n");
@@ -923,7 +919,7 @@ static void esp_drain_rx_buffer(void)
  * @note This function will update esp_current_status to ESP_STATUS_WIFI_CONNECTED
  *       on successful connection or leave it in error state on failure.
  */
-static HAL_StatusTypeDef esp_setup_wifi_connection(void)
+HAL_StatusTypeDef esp_setup_wifi_connection(void)
 {
 	char wifi_connect_cmd[128];
 
@@ -954,7 +950,7 @@ static HAL_StatusTypeDef esp_setup_wifi_connection(void)
  * @note This function assumes WiFi connection is already established.
  *       The connection parameters are taken from esp_config structure.
  */
-static HAL_StatusTypeDef esp_setup_tcp_connection(void)
+HAL_StatusTypeDef esp_setup_tcp_connection(void)
 {
 	char tcp_connect_cmd[64];
 	char cipdomain_cmd[64];
@@ -999,7 +995,7 @@ static HAL_StatusTypeDef esp_setup_tcp_connection(void)
  * @warning This function uses AT+CIPSEND command which requires the TCP connection
  *          to be already established before calling this function.
  */
-static HAL_StatusTypeDef esp_send_mqtt_connect_packet(void)
+HAL_StatusTypeDef esp_send_mqtt_connect_packet(void)
 {
 	const uint8_t mqttConnect[] = {
 			0x10, 0x11,                    // Fixed header: CONNECT, remaining length
@@ -1063,30 +1059,25 @@ void PingREQ(void){
 
 	if (esp_config.esp_uart == NULL)
 	{
-		//esp_debug_print("[ESP] Error: UART handle NULL in Start\r\n");
 		return;
 	}
 
 	char cmd[32];
 	uint8_t packet[2];
 
-	//esp_debug_print("Sending PINGREQ\r\n");
 	packet[0] = 0xC0; 	packet[1] = 0x00;  // PINGREQ
 	snprintf(cmd, sizeof(cmd), "AT+CIPSEND=2");
 
 	if(ESP_SendAT(cmd, ">", 2000) != HAL_OK){
-		//esp_debug_print("Failed to send CIPSEND\r\n");
+		ESP_LOG_CRITICAL_ERROR(ESP_SERVER_ERROR_LOSE_CONNECTION, (uint8_t)ESP_ERROR_INVALID_CMD_RESPONSE, (uint8_t)PUBLISH_TOPIC);
 		return;
 	}
 
 	if(ESP_SendBinary(packet, 2, "\xD0", 2000) != HAL_OK){
-		//esp_debug_print("Failed to send PINGREQ\r\n");
+		ESP_LOG_CRITICAL_ERROR(ESP_SERVER_ERROR_LOSE_CONNECTION, (uint8_t)ESP_ERROR_TIMEOUT, (uint8_t)PUBLISH_TOPIC);
 		return;
 	}
-
-	//esp_debug_print("Sent PINGREQ\r\n");
 	ESP_StartUARTReceive();
-
 }
 
 void ResetMessageBuffer(void) {

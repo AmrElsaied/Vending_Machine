@@ -107,6 +107,12 @@ typedef enum{
     SUBSCRIBE_TOPIC,
     MULTI_TOPIC
 }esp_topic_type_t;
+
+typedef enum{
+    ESP_ERROR_NONE = 0,
+    ESP_ERROR_TIMEOUT,
+    ESP_ERROR_INVALID_CMD_RESPONSE
+}esp_error_type_t;
 /**
  * @brief ESP publish request structure
  */
@@ -181,6 +187,7 @@ extern char g_mqtt_message[MAX_MESSAGE_BUFFER_SIZE];
 extern esp_buffer_state esp_buffer_current_state;
 extern TaskHandle_t espMqttProcessTaskHandle;
 extern const mqtt_topic_entry_t topic_handlers[];
+extern ESP_Status_t esp_current_status;
 /******************************************************************************
  *                        Function Declarations                               *
  ******************************************************************************/
@@ -282,4 +289,8 @@ void SaveWiFiConfig(const char *ssid, const char *password);
 HAL_StatusTypeDef ESP_AP_Mode(void);
 
 HAL_StatusTypeDef ESP_WaitForCredentials(void);
+
+HAL_StatusTypeDef esp_setup_wifi_connection(void);
+HAL_StatusTypeDef esp_setup_tcp_connection(void);
+HAL_StatusTypeDef esp_send_mqtt_connect_packet(void);
 #endif /* ESP8266_HANDLER_H_ */
