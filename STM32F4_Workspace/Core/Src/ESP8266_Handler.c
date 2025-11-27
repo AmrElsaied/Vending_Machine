@@ -165,7 +165,7 @@ void ESP_Init(void)
 
 	// Basic ESP8266 setup
 	if (ESP_SendAT("AT", "OK", ESP_AT_COMMAND_TIMEOUT) != HAL_OK) {
-		esp_current_status = ESP_STATUS_ERROR;
+		ESP_LOG_CRITICAL_ERROR(ESP_INTERNAL_COMM_ERROR, NO_DATA_PRESENT, NO_CONTEXT_PRESENT);
 		return;
 	}
 

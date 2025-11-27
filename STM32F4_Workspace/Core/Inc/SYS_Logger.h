@@ -58,6 +58,7 @@ typedef enum {
     ESP_TCP_ERROR_CONNECTION_FAILED = 0x0C,       /* TCP connection to broker failed */
     ESP_MQTT_ERROR_CONNECTION_FAILED = 0x0D,       /* MQTT connection failed */
     ESP_SERVER_ERROR_LOSE_CONNECTION = 0x0E,        /* MQTT server disconnected unexpectedly */
+    ESP_INTERNAL_COMM_ERROR = 0x0F,        /* Internal communication error with ESP8266 */
     MAX_ERROR_CODE_NUMBER
  }Error_code_t;
 /******************************************************************************

@@ -60,7 +60,8 @@ Critical_Error_logger_t Critical_Error_Logger[MAX_ERROR_CODE_NUMBER] = {
     {ESP_WIFI_ERROR_CONNECTION_FAILED, 0, 1},
     {ESP_TCP_ERROR_CONNECTION_FAILED, 0, 1},
     {ESP_MQTT_ERROR_CONNECTION_FAILED, 0, 1},
-    {ESP_SERVER_ERROR_LOSE_CONNECTION, 0, 4}
+    {ESP_SERVER_ERROR_LOSE_CONNECTION, 0, 4},
+    {ESP_INTERNAL_COMM_ERROR, 0, 1}
 };
 /******************************************************************************
  *                         Private Prototypes                                 *
@@ -345,9 +346,8 @@ static void SYS_HandleCriticalErrorAction(Error_code_t error_code) {
     switch (error_code) {
         case SYSTASK_ERROR_TASK_CREATION_FAILED:
         case SYSTASK_ERROR_QUEUE_CREATION_FAILED:
+            LED_On(LED_CHANNEL_DIAG);
             while(1){ // Halt system
-                LED_Toggle(LED_CHANNEL_DIAG);
-                HAL_Delay(500);
             }
             break;
         case ESP_WIFI_ERROR_CONNECTION_FAILED:
@@ -356,8 +356,16 @@ static void SYS_HandleCriticalErrorAction(Error_code_t error_code) {
                 while(1){ // Halt if still failing
                     LED_Toggle(LED_CHANNEL_DIAG);
                     HAL_Delay(500);
+                    // Timer to retry WiFi connection every 5 seconds
+                    static uint32_t wifi_retry_timer = 0;
+                    if (HAL_GetTick() - wifi_retry_timer >= 5000) {
+                        wifi_retry_timer = HAL_GetTick();
+                        if (esp_setup_wifi_connection() == HAL_OK) {
+                            break;
+                        }
+                    }
+                    }
                 }
-            }
             break;
         case ESP_TCP_ERROR_CONNECTION_FAILED:
             // Attempt to reset TCP connection
@@ -365,6 +373,14 @@ static void SYS_HandleCriticalErrorAction(Error_code_t error_code) {
                 while(1){ // Halt if still failing
                     LED_Toggle(LED_CHANNEL_DIAG);
                     HAL_Delay(500);
+                    // Timer to retry TCP connection every 5 seconds
+                    static uint32_t tcp_retry_timer = 0;
+                    if (HAL_GetTick() - tcp_retry_timer >= 5000) {
+                        tcp_retry_timer = HAL_GetTick();
+                        if (esp_setup_tcp_connection() == HAL_OK) {
+                            break; // Exit loop if successful
+                        }
+                    }
                 }
             }
             break;
@@ -374,16 +390,48 @@ static void SYS_HandleCriticalErrorAction(Error_code_t error_code) {
                 while(1){ // Halt if still failing
                     LED_Toggle(LED_CHANNEL_DIAG);
                     HAL_Delay(500);
+                    // Timer to retry MQTT connection every 5 seconds
+                    static uint32_t mqtt_retry_timer = 0;
+                    if (HAL_GetTick() - mqtt_retry_timer >= 5000) {
+                        mqtt_retry_timer = HAL_GetTick();
+                        if (esp_send_mqtt_connect_packet() == HAL_OK) {
+                            break; // Exit loop if successful
+                        }
+                    }
                 }
             }
             break;
         case ESP_SERVER_ERROR_LOSE_CONNECTION:
-            // Attempt to reconnect to MQTT server
-            ESP_Init();
             if (esp_current_status != ESP_STATUS_MQTT_CONNECTED) {
                 while(1){ // Halt if still failing
                     LED_Toggle(LED_CHANNEL_DIAG);
                     HAL_Delay(500);
+                    // Timer to retry init the ESP every 5 seconds
+                    static uint32_t esp_init_retry_timer = 0;
+                    if (HAL_GetTick() - esp_init_retry_timer >= 5000) {
+                        esp_init_retry_timer = HAL_GetTick();
+                        ESP_Init();
+                        if (esp_current_status == ESP_STATUS_MQTT_CONNECTED) {
+                            break; // Exit loop if successful
+                        }
+                    }
+                }
+            }
+            break;
+        case ESP_INTERNAL_COMM_ERROR:
+            // Attempt to reinitialize ESP internal communication
+            if (ESP_SendAT("AT", "OK", ESP_AT_COMMAND_TIMEOUT) != HAL_OK) {
+                while(1){ // Halt if still failing
+                    LED_Toggle(LED_CHANNEL_DIAG);
+                    HAL_Delay(500);
+                    // Timer to retry init the ESP every 5 seconds
+                    static uint32_t esp_internal_comm_retry_timer = 0;
+                    if (HAL_GetTick() - esp_internal_comm_retry_timer >= 5000) {
+                        esp_internal_comm_retry_timer = HAL_GetTick();
+                        if (ESP_SendAT("AT", "OK", ESP_AT_COMMAND_TIMEOUT) == HAL_OK) {
+                            break; // Exit loop if successful
+                        }
+                    }
                 }
             }
             break;
