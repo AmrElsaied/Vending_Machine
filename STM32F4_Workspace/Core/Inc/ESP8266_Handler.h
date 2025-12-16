@@ -52,7 +52,7 @@
 #define ESP_DEFAULT_UNCONFIGURED_PASSWORD        "EMPTY_CONFIG"
 
 /* Default MQTT Broker Settings */
-#define ESP_DEFAULT_MQTT_BROKER     "192.168.1.110"
+#define ESP_DEFAULT_MQTT_BROKER     "192.168.1.106"
 #define ESP_DEFAULT_MQTT_PORT       1883
 
 #define ESP_DEFAULT_CLIENT_ID       "STM32"
@@ -67,6 +67,11 @@
 #define RX_BUF_LEN   64
 #define MAX_SSID_LEN 32
 #define MAX_PASS_LEN 64
+
+
+#define MQTT_PACKET_USERNAME 		"magdy"
+#define MQTT_PACKET_PASSWORD 		"987654321"
+#define MQTT_PACKET_KEEPALIVE		60
 /******************************************************************************
  *                          Type Definitions                                  *
  ******************************************************************************/

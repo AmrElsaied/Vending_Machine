@@ -47,7 +47,7 @@ typedef struct {
 static Error_Logger_t Error_Logger = {.head = 0, .count = 0, .total_errors = 0};
 static bool logger_initialized = false;
 Critical_Error_logger_t Critical_Error_Logger[MAX_ERROR_CODE_NUMBER] = {
-    {MDB_ERROR_UART_NOT_CONFIGURED, 0, 3},
+    {MDB_ERROR_UART_NOT_CONFIGURED, 0, 1},
     {MDB_ERROR_SUB_COMMAND_NOT_RECOGNIZED, 0, 3},
     {MDB_ERROR_INVALID_RX_STATE, 0, 3},
     {MDB_ERROR_INVALID_PROCESS_STATE, 0, 3},
@@ -61,7 +61,8 @@ Critical_Error_logger_t Critical_Error_Logger[MAX_ERROR_CODE_NUMBER] = {
     {ESP_TCP_ERROR_CONNECTION_FAILED, 0, 1},
     {ESP_MQTT_ERROR_CONNECTION_FAILED, 0, 1},
     {ESP_SERVER_ERROR_LOSE_CONNECTION, 0, 4},
-    {ESP_INTERNAL_COMM_ERROR, 0, 1}
+    {ESP_INTERNAL_COMM_ERROR, 0, 1},
+    {ESP_ERROR_UART_NOT_CONFIGURED, 0, 1}
 };
 /******************************************************************************
  *                         Private Prototypes                                 *
@@ -344,10 +345,22 @@ static uint8_t SYS_GetCurrentState(void) {
 static void SYS_HandleCriticalErrorAction(Error_code_t error_code) {
     // Handle specific critical error actions
     switch (error_code) {
+        case MDB_ERROR_UART_NOT_CONFIGURED:
+            // Cannot proceed without UART, halt system
+            LED_On(LED_CHANNEL_DIAG);
+            while(1){
+            }
+            break;
         case SYSTASK_ERROR_TASK_CREATION_FAILED:
         case SYSTASK_ERROR_QUEUE_CREATION_FAILED:
             LED_On(LED_CHANNEL_DIAG);
             while(1){ // Halt system
+            }
+            break;
+            case ESP_ERROR_UART_NOT_CONFIGURED:
+            // Cannot proceed without UART, halt system
+            LED_On(LED_CHANNEL_DIAG);
+            while(1){
             }
             break;
         case ESP_WIFI_ERROR_CONNECTION_FAILED:
@@ -402,18 +415,16 @@ static void SYS_HandleCriticalErrorAction(Error_code_t error_code) {
             }
             break;
         case ESP_SERVER_ERROR_LOSE_CONNECTION:
-            if (esp_current_status != ESP_STATUS_MQTT_CONNECTED) {
-                while(1){ // Halt if still failing
-                    LED_Toggle(LED_CHANNEL_DIAG);
-                    HAL_Delay(500);
-                    // Timer to retry init the ESP every 5 seconds
-                    static uint32_t esp_init_retry_timer = 0;
-                    if (HAL_GetTick() - esp_init_retry_timer >= 5000) {
-                        esp_init_retry_timer = HAL_GetTick();
-                        ESP_Init();
-                        if (esp_current_status == ESP_STATUS_MQTT_CONNECTED) {
-                            break; // Exit loop if successful
-                        }
+            while(1){ // Halt if still failing
+                LED_Toggle(LED_CHANNEL_DIAG);
+                HAL_Delay(500);
+                // Timer to retry init the ESP every 5 seconds
+                static uint32_t esp_init_retry_timer = 0;
+                if (HAL_GetTick() - esp_init_retry_timer >= 5000) {
+                    esp_init_retry_timer = HAL_GetTick();
+                    ESP_Init();
+                    if (esp_current_status == ESP_STATUS_MQTT_CONNECTED) {
+                        break; // Exit loop if successful
                     }
                 }
             }

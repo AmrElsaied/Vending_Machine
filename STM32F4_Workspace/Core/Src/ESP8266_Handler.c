@@ -903,19 +903,93 @@ HAL_StatusTypeDef esp_setup_tcp_connection(void)
  */
 HAL_StatusTypeDef esp_send_mqtt_connect_packet(void)
 {
-	const uint8_t mqttConnect[] = {
-			0x10, 0x11,                    // Fixed header: CONNECT, remaining length
-			0x00, 0x04,                    // Protocol Name Length
-			0x4D, 0x51, 0x54, 0x54,        // "MQTT"
-			0x04,                          // Protocol Level (MQTT v3.1.1)
-			0x02,                          // Connect Flags: Clean session
-			0x00, 0x64,                    // Keep alive = 100 seconds
-			0x00, 0x05,                    // Client ID length
-			'S', 'T', 'M', '3', '2'        // Client ID: "STM32"
-	};
+    // --- Configuration ---
+    const size_t username_len = strlen(MQTT_PACKET_USERNAME);
+    const size_t password_len = strlen(MQTT_PACKET_PASSWORD);
+
+    // Convert the Keep Alive value (e.g., 60 seconds) into a two-byte array (MSB, LSB)
+    // 60 decimal is 0x003C in hexadecimal.
+    const uint8_t keep_alive[] = {
+        (uint8_t)(MQTT_PACKET_KEEPALIVE >> 8),  // MSB
+        (uint8_t)(MQTT_PACKET_KEEPALIVE & 0xFF) // LSB
+    };
+
+    // --- MQTT Packet Construction Components ---
+
+    const uint8_t fixed_header_type = 0x10; // CONNECT packet type
+
+    // Variable Header
+    const uint8_t protocol_name[] = {0x00, 0x04, 'M', 'Q', 'T', 'T'}; // Protocol Name Length (0x04), "MQTT"
+    const uint8_t protocol_level = 0x04;                               // MQTT v3.1.1
+    const uint8_t connect_flags_base = 0x02;                           // Clean session (Bit 1)
+    const uint8_t connect_flags_user = 0x80;                           // Username Flag (Bit 7)
+    const uint8_t connect_flags_pass = 0x40;                           // Password Flag (Bit 6)
+    const uint8_t client_id_len[] = {0x00, 0x05};                      // Client ID length (5 bytes)
+    const char client_id[] = {'S', 'T', 'M', '3', '2'};                // Client ID: "STM32"
+
+    // --- Remaining Length Calculation (Unchanged from previous logic) ---
+
+    // 1. Variable Header length: (Protocol Name + Level + Flags + KeepAlive)
+    size_t remaining_len = sizeof(protocol_name) + sizeof(protocol_level) + 1 + sizeof(keep_alive);
+
+    // 2. Client ID length: (Length field + Value)
+    remaining_len += sizeof(client_id_len) + sizeof(client_id);
+
+    // 3. Username length: (Length field + Value)
+    remaining_len += 2 + username_len;
+
+    // 4. Password length: (Length field + Value)
+    remaining_len += 2 + password_len;
+
+    // Basic check for single-byte Remaining Length encoding
+    if (remaining_len > 127) {
+        return HAL_ERROR;
+    }
+
+    // --- Dynamic Packet Assembly ---
+
+    const size_t packet_size = 2 + remaining_len;
+    uint8_t mqttConnect[packet_size];
+    uint8_t *ptr = mqttConnect;
+
+    // 1. Fixed Header
+    *ptr++ = fixed_header_type;
+    *ptr++ = (uint8_t)remaining_len; // Single-byte remaining length
+
+    // 2. Variable Header
+    memcpy(ptr, protocol_name, sizeof(protocol_name));
+    ptr += sizeof(protocol_name);
+
+    *ptr++ = protocol_level;
+
+    // Set Connect Flags (Clean Session | Username Flag | Password Flag)
+    *ptr++ = connect_flags_base | connect_flags_user | connect_flags_pass;
+
+    // **CHANGE IS HERE:** Use the dynamic 'keep_alive' array
+    memcpy(ptr, keep_alive, sizeof(keep_alive));
+    ptr += sizeof(keep_alive);
+
+    // 3. Payload - Client ID
+    memcpy(ptr, client_id_len, sizeof(client_id_len));
+    ptr += sizeof(client_id_len);
+    memcpy(ptr, client_id, sizeof(client_id));
+    ptr += sizeof(client_id);
+
+    // 4. Payload - Username
+    *ptr++ = (uint8_t)(username_len >> 8);
+    *ptr++ = (uint8_t)(username_len & 0xFF);
+    memcpy(ptr, MQTT_PACKET_USERNAME, username_len);
+    ptr += username_len;
+
+    // 5. Payload - Password
+    *ptr++ = (uint8_t)(password_len >> 8);
+    *ptr++ = (uint8_t)(password_len & 0xFF);
+    memcpy(ptr, MQTT_PACKET_PASSWORD, password_len);
+
+    // --- ESP Send Logic (Unchanged) ---
 
 	char cipsendCmd[32];
-	sprintf(cipsendCmd, "AT+CIPSEND=%d", (int)sizeof(mqttConnect));
+	sprintf(cipsendCmd, "AT+CIPSEND=%d", (int)packet_size);
 
 	// Step 1: Send AT+CIPSEND and wait for '>'
 	if (ESP_SendAT(cipsendCmd, ">", 5000) != HAL_OK) {
@@ -923,7 +997,7 @@ HAL_StatusTypeDef esp_send_mqtt_connect_packet(void)
 	}
 
 	// Step 2: Send MQTT CONNECT packet using the binary sender
-	if (ESP_SendBinary((uint8_t *)mqttConnect, sizeof(mqttConnect), "\x20", 8000) != HAL_OK) {
+	if (ESP_SendBinary(mqttConnect, packet_size, "\x20", 8000) != HAL_OK) {
 		return HAL_ERROR;
 	}
 
@@ -1174,8 +1248,7 @@ HAL_StatusTypeDef ESP_AP_Mode(void){
 	HAL_Delay(2000);
 	// Validate configuration
 	if (esp_config.esp_uart == NULL) {
-		esp_current_status = ESP_STATUS_ERROR;
-		return HAL_ERROR;
+		ESP_LOG_CRITICAL_ERROR(ESP_ERROR_UART_NOT_CONFIGURED, NO_DATA_PRESENT, NO_DATA_PRESENT);
 	}
 
 	char command_buffer[128];

@@ -168,7 +168,7 @@ void MDB_BusInit(void)
 {
     // Validate configuration
     if (mdb_config.mdb_uart == NULL) {
-        ESP_LOG_ERROR(MDB_ERROR_UART_NOT_CONFIGURED,NO_DATA_PRESENT,NO_CONTEXT_PRESENT);
+        MDB_LOG_CRITICAL_ERROR(MDB_ERROR_UART_NOT_CONFIGURED,NO_DATA_PRESENT,NO_CONTEXT_PRESENT);
         return;
     }
     mdbRing_init(&rxRing);  
