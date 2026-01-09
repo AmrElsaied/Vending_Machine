@@ -292,6 +292,14 @@ static HAL_StatusTypeDef SYS_TransmitUART(const char* message) {
  * @param command_context Command context
  */
 static void SYS_WriteErrorToLog(Error_code_t error_code, uint16_t error_data, uint8_t command_context) {
+    // Always increment total errors to track all error attempts
+    Error_Logger.total_errors++;
+    
+    // Check if buffer is full - stop logging if it is
+    if (Error_Logger.count >= ERROR_LOGS_BUFFER_SIZE) {
+        return; // Buffer full, discard this error
+    }
+    
     // Get current error entry
     Error_Info_t *error_entry = &Error_Logger.error_logs[Error_Logger.head];
     
@@ -302,16 +310,9 @@ static void SYS_WriteErrorToLog(Error_code_t error_code, uint16_t error_data, ui
     error_entry->state_context = SYS_GetCurrentState();
     error_entry->command_context = command_context;
     
-    // Update circular buffer pointers
-    Error_Logger.head = (Error_Logger.head + 1) % ERROR_LOGS_BUFFER_SIZE;
-    
-    // Update count (max is buffer size)
-    if (Error_Logger.count < ERROR_LOGS_BUFFER_SIZE) {
-        Error_Logger.count++;
-    }
-    
-    // Always increment total errors
-    Error_Logger.total_errors++;
+    // Update buffer pointers
+    Error_Logger.head++;
+    Error_Logger.count++;
 }
 
 /**

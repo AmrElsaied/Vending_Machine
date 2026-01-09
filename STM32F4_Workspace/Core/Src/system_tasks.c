@@ -131,17 +131,17 @@ void System_TaskCreate(void)
         ESP_LOG_CRITICAL_ERROR(SYSTASK_ERROR_TASK_CREATION_FAILED, configMAX_PRIORITIES-5, NO_CONTEXT_PRESENT);
     }
 
-    // xTaskCreate(
-    //     PeriodicMainTask,
-    //     "PeriodicMainTask",
-    //     512*1,                                    /* Stack size in WORDS */
-    //     NULL,
-    //     configMAX_PRIORITIES-10,                 /* Lower priority than ESP MQTT task */
-    //     &periodicMainTaskHandle);
-    // if(periodicMainTaskHandle == NULL) {
-    //     /* Task creation failed - handle error */
-    //     ESP_LOG_CRITICAL_ERROR(SYSTASK_ERROR_TASK_CREATION_FAILED, configMAX_PRIORITIES-10, NO_CONTEXT_PRESENT);
-    // }
+    xTaskCreate(
+        PeriodicMainTask,
+        "PeriodicMainTask",
+        512,                                    /* Stack size in WORDS */
+        NULL,
+        configMAX_PRIORITIES-10,                 /* Lower priority than ESP MQTT task */
+        &periodicMainTaskHandle);
+    if(periodicMainTaskHandle == NULL) {
+        /* Task creation failed - handle error */
+        ESP_LOG_CRITICAL_ERROR(SYSTASK_ERROR_TASK_CREATION_FAILED, configMAX_PRIORITIES-10, NO_CONTEXT_PRESENT);
+    }
 }
 
 /**
@@ -172,7 +172,6 @@ uint32_t ESP_GetPendingPublishCount(void)
     if (espPublishQueue == NULL) {
         return 0;
     }
-    
     return (uint32_t)uxQueueMessagesWaiting(espPublishQueue);
 }
 /******************************************************************************
@@ -402,7 +401,7 @@ static void PeriodicMainTask(void *argument)
     
     // periodic_task_config_t monitor_config = {
     //     .module_id = PERIODIC_MODULE_SYSTEM_MONITOR,
-    //     .callback = SYSTEM_MONITOR_PeriodicUpdate,
+    //     .callback = PERIODIC_TASK_CommunicationMonotoringCallback,
     //     .period_ms = 50,    /* Every 50ms for monitoring */
     //     .enabled = true
     // };

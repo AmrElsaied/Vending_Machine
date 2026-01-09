@@ -141,7 +141,7 @@ extern MDB_Config_t mdb_config;                         /* MDB configuration str
 extern MDB_StateManager_t MDB_StateManager;             /* State manager for MDB protocol */
 extern MDB_BusManager_t MDB_BusManager;                 /* Bus manager for MDB protocol */
 extern vend_req_state_t vend_request_current_state;     /* Current vend request state */
-extern uint8_t balance_setValue;                         /* Balance set value */
+extern uint16_t balance_setValue;                         /* Balance set value */
 /******************************************************************************
  *                              Public API                                    *
  ******************************************************************************/

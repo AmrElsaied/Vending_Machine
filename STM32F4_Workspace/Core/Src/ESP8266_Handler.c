@@ -1048,7 +1048,7 @@ static void handle_vend_request_topic(const char* message)
     if (!ESP_ParseVendAmount(message, &vend_amount)) {
         return;
     }
-	balance_setValue = (uint8_t)vend_amount;
+	balance_setValue = vend_amount;
 	SetVendReq_State(VEND_REQ_STATE_ENABLE);
 }
 static void handle_mainSubscribeTopic(const char *message)

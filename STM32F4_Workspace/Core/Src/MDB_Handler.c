@@ -61,7 +61,7 @@ static void MDB_InitCommandReception(uint8_t cmd_index, uint16_t first_word);
 static void MDB_CompleteCommandReception(uint8_t cmd_index);
 static void MDB_RequestAck(uint8_t skip_count, Peripheral_State_t req_state);
 static void MDB_UpdateVendingItemData(uint16_t *RxBuffer);
-static void Set_CurBalance(uint8_t new_balance);
+static void Set_CurBalance(uint16_t new_balance);
 static void Internal_VendReq_Change(vend_req_state_t state);
 static void MDB_StateChangeHandler(Peripheral_State_t old_state, Peripheral_State_t new_state);
 static void MDB_ChangeState(Peripheral_State_t new_state);
@@ -103,7 +103,7 @@ Vending_Item_Data_t Vending_Item_Data;
 Peripheral_balance_t Peripheral_Balance = {244, 0, 244};
 bool Internal_VendReq_Change_flag = false;
 vend_req_state_t vend_request_current_state = VEND_REQ_STATE_IDLE; /* Current vend request state */
-uint8_t balance_setValue = 0;
+uint16_t balance_setValue = 0;
 
 /******************************************************************************
  *                          Public Functions                                  *
@@ -545,7 +545,7 @@ static uint16_t MDB_CalculateChecksum(uint16_t *buffer, uint8_t length) {
  * @warning No bounds checking is performed on the new_balance parameter.
  *          Caller must ensure the value is valid and within acceptable range.
  */
-static void Set_CurBalance(uint8_t new_balance)
+static void Set_CurBalance(uint16_t new_balance)
 {
     if(new_balance <= Peripheral_Balance.Max_balance)
     {
@@ -744,7 +744,7 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
             case STATE_DENY_VEND_REQ:
                 // Handle command during DENY_VEND_REQ state
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0006;
-                VMC_CMDs[cmd_index].CMD_Response[0] = 0x0106;
+                VMC_CMDs[cmd_index].CMD_Response[1] = 0x0106;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 2;
                 Vending_Item_Data.Vend_Item_State = VEND_ITEM_FAILURE;
                 MDB_RequestAck(1, STATE_CANCEL_SESSION);
@@ -1103,6 +1103,8 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
                 MDB_ChangeState(STATE_SESSION_IDLE);
                 Vending_Item_Data.Vend_Item_State = VEND_ITEM_SUCCESS;
                 Internal_VendReq_Change(VEND_REQ_STATE_DISABLE);
+                //Set the balance to be zero after successful vend
+                Set_CurBalance(0);
                 break;
             default:
                 // No other sub-commands valid in this state
@@ -1120,6 +1122,8 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
                 VMC_CMDs[cmd_index].CMD_Response[0] = 0x0007;
                 VMC_CMDs[cmd_index].CMD_Response[1] = 0x0107;
                 VMC_CMDs[cmd_index].CMD_Response_Length = 2;
+                //Set the balance to be zero after successful vend
+                Set_CurBalance(0);
                 // Prepare item data string for publishing
                 char itemDataStr[64];  // Local variable to hold formatted data string
                 char *status = (Vending_Item_Data.Vend_Item_State == VEND_ITEM_SUCCESS) ? "SUCCESS" : "FAILURE";
