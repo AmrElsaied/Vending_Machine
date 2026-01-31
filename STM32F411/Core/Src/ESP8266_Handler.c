@@ -1,0 +1,1480 @@
+/*******************************************************************************
+ * @file    ESP8266_Handler.c
+ * @author  Amr Mohamed
+ * @brief   Source file for ESP8266 WiFi module handler
+ *
+ * @details
+ * Implements ESP8266 WiFi module communication including AT command handling,
+ * MQTT protocol implementation, and WiFi connectivity management for the
+ * vending machine system.
+ *
+ * @version 1.0
+ * @date    2025-09-13
+ ******************************************************************************/
+
+/******************************************************************************
+ *                                Includes                                    *
+ ******************************************************************************/
+#include "ESP8266_Handler.h"
+#include <string.h>
+#include <stdio.h>
+#include "MDB_Handler.h"
+#include "Flash_Driver.h"
+#include "LED_Controller.h"
+#include "SYS_Logger.h"
+/******************************************************************************
+ *                             Module Config                                  *
+ ******************************************************************************/
+
+/******************************************************************************
+ *                            Private Macros                                  *
+ ******************************************************************************/
+
+/******************************************************************************
+ *                         Private Data Types                                 *
+ ******************************************************************************/
+
+/******************************************************************************
+ *                           Public Variables                                 *
+ ******************************************************************************/
+
+/******************************************************************************
+ *                         Private Prototypes                                 *
+ ******************************************************************************/
+static void esp_drain_rx_buffer(void);
+
+static void handle_vend_request_topic(const char* message);
+static void handle_ping_topic(const char* message);
+static void handle_unknown_topic(const char* message);
+static void handle_unknown_keyword(const char* message);
+static bool FLASH_IsErased(uint32_t addr, uint32_t size);
+static void LoadWiFiConfig(char* ssid, char* password);
+static void clear_wifi_credentials(void);
+static bool ESP_ParseVendAmount(const char *message, uint16_t *amount);
+static void handle_mainSubscribeTopic(const char *message);
+/******************************************************************************
+ *                          Private Variables                                 *
+ ******************************************************************************/
+uint8_t esp_binary_rx_buffer[ESP_UART_RX_BUFFER_SIZE];  // dedicated binary response buffer
+uint8_t esp_uart_callback_buffer[ESP_UART_RX_BUFFER_SIZE];
+volatile uint16_t esp_expected_len = 0;
+static uint16_t current_mqtt_msg_id = 0;
+
+char g_mqtt_topic[MAX_TOPIC_BUFFER_SIZE];
+char g_mqtt_message[MAX_MESSAGE_BUFFER_SIZE];
+
+uint8_t esp_rx_byte;
+static volatile uint16_t esp_rx_head = 0;
+static volatile uint16_t esp_rx_tail = 0;
+static volatile uint16_t esp_uart_rx_index = 0;
+
+static char esp_response_buffer[ESP_RESPONSE_BUFFER_SIZE];
+ESP_Status_t esp_current_status = ESP_STATUS_UNINITIALIZED;
+vend_req_state_t esp_vend_current_state = VEND_REQ_STATE_IDLE;
+
+ESP_Config_t esp_config = {
+		.wifi_ssid = ESP_DEFAULT_SSID,
+		.wifi_password = ESP_DEFAULT_PASSWORD,
+		.mqtt_broker_ip = ESP_DEFAULT_MQTT_BROKER,
+		.mqtt_broker_port = ESP_DEFAULT_MQTT_PORT,
+		.mqtt_client_id = ESP_DEFAULT_CLIENT_ID,
+		.esp_uart = NULL          /* Will be set via ESP_SetConfig() */
+};
+
+
+
+static esp_rx_state_t esp_current_state = ESP_STATE_PARSING_HEADER;
+
+/* Topic handler table - Add new topics here */
+const mqtt_topic_entry_t topic_handlers[] = {
+    {"stm32/main_subscribe", handle_mainSubscribeTopic, SUBSCRIBE_TOPIC, "Main subscribe topic handler"},
+	{"stm32/main_publish", NULL, PUBLISH_TOPIC, "Main publish topic handler"},
+	{NULL, handle_unknown_topic,PUBLISH_TOPIC, "Default handler for unregistered topics"}  /* Default handler */
+};
+/* Keyword handler table - Add new keywords here */
+ const mqtt_keyword_handler_t SubscribeMainTopicKeywordHandlers[] = {
+	{"Vend:", handle_vend_request_topic, "Vending machine request control"},
+	{"ping", handle_ping_topic, "System ping/health check"},
+	{"status", NULL, "Status updates from STM32"},  // No handler, just for publishing
+	{NULL, handle_unknown_keyword, "Default handler for unregistered message"}  /* Default handler */
+ };
+/******************************************************************************
+ *                          Public Functions                                  *
+ ******************************************************************************/
+
+/**
+ * @brief Set ESP8266 configuration including UART handles
+ * @param config Pointer to ESP8266 configuration structure
+ * @note Must be called before ESP_Init()
+ */
+void ESP_SetConfig(ESP_Config_t *config)
+{
+	if (config != NULL) {
+		memcpy(&esp_config, config, sizeof(ESP_Config_t));
+	}
+}
+
+/**
+ * @brief Get current ESP8266 configuration
+ * @return Pointer to current configuration structure
+ */
+ESP_Config_t* ESP_GetConfig(void)
+{
+	return &esp_config;
+}
+
+/**
+ * @brief Initialize ESP8266 module and establish connections
+ * @note Complete initialization including WiFi and MQTT connection
+ */
+void ESP_Init(void)
+{
+	esp_current_status = ESP_STATUS_UNINITIALIZED;
+	LED_On(LED_CHANNEL_COMM); // Indicate initialization start
+	clear_wifi_credentials();
+	LoadWiFiConfig(ESP8266_DefaultConfig.wifi_ssid, ESP8266_DefaultConfig.wifi_password);
+	// Set the configuration with the default configuration
+	ESP_SetConfig(&ESP8266_DefaultConfig);
+	// Check if WiFi credentials are unconfigured
+	if (strcmp(ESP8266_DefaultConfig.wifi_ssid, ESP_DEFAULT_UNCONFIGURED_SSID) == 0 ||
+		strcmp(ESP8266_DefaultConfig.wifi_password, ESP_DEFAULT_UNCONFIGURED_PASSWORD) == 0) {
+		esp_current_status = ESP_STATUS_CONFIGURING;
+		// will be asked to configure via HTTP requests through the application
+		//Start the Access Point mode
+		ESP_AP_Mode();
+		// Get the SSID and Password from the user via HTTP server
+		clear_wifi_credentials();
+		ESP_WaitForCredentials();
+		// Store the new credentials in flash
+		SaveWiFiConfig(ESP8266_DefaultConfig.wifi_ssid, ESP8266_DefaultConfig.wifi_password);
+		//Reset the CPU
+		HAL_NVIC_SystemReset();
+		return;
+	}
+	HAL_Delay(2000);
+	// Validate configuration
+	if (esp_config.esp_uart == NULL) {
+		esp_current_status = ESP_STATUS_ERROR;
+		return;
+	}
+
+	esp_current_status = ESP_STATUS_INITIALIZING;
+
+	// Drain any pending data in RX buffer
+	esp_drain_rx_buffer();
+
+	// Basic ESP8266 setup
+	if (ESP_SendAT("AT", "OK", ESP_AT_COMMAND_TIMEOUT) != HAL_OK) {
+		ESP_LOG_CRITICAL_ERROR(ESP_INTERNAL_COMM_ERROR, NO_DATA_PRESENT, NO_CONTEXT_PRESENT);
+		return;
+	}
+
+	// Setup WiFi connection
+	if (esp_setup_wifi_connection() != HAL_OK) {
+		ESP_LOG_CRITICAL_ERROR(ESP_WIFI_ERROR_CONNECTION_FAILED, NO_DATA_PRESENT, NO_CONTEXT_PRESENT);
+	}
+
+	// Setup TCP connection to MQTT broker
+	if (esp_setup_tcp_connection() != HAL_OK) {
+		ESP_LOG_CRITICAL_ERROR(ESP_TCP_ERROR_CONNECTION_FAILED, NO_DATA_PRESENT, NO_CONTEXT_PRESENT);
+	}
+
+	// Setup MQTT connection
+	if (esp_send_mqtt_connect_packet() != HAL_OK) {
+		ESP_LOG_CRITICAL_ERROR(ESP_MQTT_ERROR_CONNECTION_FAILED, NO_DATA_PRESENT, NO_CONTEXT_PRESENT);
+	}
+
+	esp_current_status = ESP_STATUS_MQTT_CONNECTED;
+	// Subscribe to topics
+	for (int i = 0; i < ESP_TOPIC_MAXNUM; i++) {
+		if (topic_handlers[i].topic_type == PUBLISH_TOPIC) {
+			continue;
+		}
+		ESP_Subscribe(topic_handlers[i].topic_pattern, 1);
+		HAL_Delay(2000);
+	}
+}
+
+
+/**
+ * @brief Send AT command and wait for expected response
+ * @param cmd AT command string to send
+ * @param expect Expected response string (NULL to skip validation)
+ * @param timeout Timeout in milliseconds
+ * @return HAL_OK if successful, HAL_ERROR otherwise
+ */
+HAL_StatusTypeDef ESP_SendAT(const char *cmd, const char *expect, uint32_t timeout)
+{
+	if (esp_config.esp_uart == NULL) {
+		return HAL_ERROR;
+	}
+
+	// Validate inputs
+	if (cmd == NULL || *cmd == '\0') {
+		return HAL_ERROR;
+	}
+
+	uint16_t idx = 0;
+	uint32_t tickstart = HAL_GetTick();
+	bool found = false;
+	const uint32_t busy_delay_ms = 1500;
+
+	// Clear response buffer efficiently
+	esp_response_buffer[0] = '\0';
+
+	// Build AT command with bounds checking
+	char atCommand[128];
+	int cmd_len = snprintf(atCommand, sizeof(atCommand), "%s\r\n", cmd);
+	if (cmd_len < 0 || (size_t)cmd_len >= sizeof(atCommand)) {
+		return HAL_ERROR;
+	}
+
+	// Transmit command
+	if (HAL_UART_Transmit(esp_config.esp_uart, (uint8_t *)atCommand, (uint16_t)cmd_len, HAL_MAX_DELAY) != HAL_OK) {
+		return HAL_ERROR;
+	}
+
+	// Pre-calculate lengths for efficiency
+	const char *busy_str = "busy";
+	const size_t busy_len = strlen(busy_str);
+	const size_t expect_len = (expect != NULL) ? strlen(expect) : 0;
+	const size_t buffer_size = sizeof(esp_response_buffer);
+
+	// Receive loop
+	while ((HAL_GetTick() - tickstart) < timeout && idx < buffer_size - 1) {
+		uint8_t ch;
+
+		if (HAL_UART_Receive(esp_config.esp_uart, &ch, 1, 10) == HAL_OK) {
+			// Store character
+			esp_response_buffer[idx++] = ch;
+			esp_response_buffer[idx] = '\0';
+
+			// Only check for patterns if we have enough data
+			if (idx >= busy_len && !found) {
+				// Check for busy response (only check recent characters to avoid scanning entire buffer)
+				if (idx >= busy_len &&
+						memcmp(&esp_response_buffer[idx - busy_len], busy_str, busy_len) == 0) {
+					HAL_Delay(busy_delay_ms);
+
+					// Reset for retry
+					idx = 0;
+					esp_response_buffer[0] = '\0';
+					tickstart = HAL_GetTick();
+
+					// Retransmit command
+					if (HAL_UART_Transmit(esp_config.esp_uart, (uint8_t *)atCommand, (uint16_t)cmd_len, HAL_MAX_DELAY) != HAL_OK) {
+						return HAL_ERROR;
+					}
+					continue;
+				}
+
+				// Check for expected response
+				if (expect != NULL && idx >= expect_len) {
+					// Only search the recent portion where the response could be
+					size_t search_start = (idx > expect_len + 32) ? idx - expect_len - 32 : 0;
+					if (strstr(&esp_response_buffer[search_start], expect) != NULL) {
+
+						found = true;
+						// Don't break - continue to collect remaining data
+					}
+				}
+			}
+		}
+
+		// Early exit if we found what we're looking for and no more data is coming
+		if (found) {
+			// Check if we've had a period without new data (indicates end of response)
+			uint32_t data_timeout = 100; // ms without new data
+			uint32_t data_tick = HAL_GetTick();
+			while ((HAL_GetTick() - data_tick) < data_timeout && idx < buffer_size - 1) {
+				if (HAL_UART_Receive(esp_config.esp_uart, &ch, 1, 10) == HAL_OK) {
+					esp_response_buffer[idx++] = ch;
+					esp_response_buffer[idx] = '\0';
+					data_tick = HAL_GetTick(); // Reset timeout
+				}
+			}
+			break;
+		}
+	}
+
+	// Evaluate result
+	if (found) {
+		return HAL_OK;
+	} else if (idx == 0) {
+		return HAL_TIMEOUT;
+	} else {
+		return HAL_ERROR;
+	}
+}
+
+HAL_StatusTypeDef ESP_SendBinary(uint8_t *bin, size_t len, const char *expect, uint32_t timeout)
+{
+
+	if (esp_config.esp_uart == NULL) {
+		return HAL_ERROR;
+	}
+
+	if (bin == NULL && len > 0) {
+		return HAL_ERROR;
+	}
+
+	uint16_t idx = 0;
+	uint32_t tickstart = HAL_GetTick();
+	bool found = false;
+	const char *error_str = "ERROR";
+	const size_t error_len = strlen(error_str);
+	const size_t expect_len = (expect != NULL) ? strlen(expect) : 0;
+	const size_t buffer_size = sizeof(esp_binary_rx_buffer);
+
+	// Clear buffer efficiently (only first byte for string functions)
+	esp_binary_rx_buffer[0] = '\0';
+
+	// Transmit binary data
+	if (len > 0) {
+
+		if (HAL_UART_Transmit(esp_config.esp_uart, bin, len, HAL_MAX_DELAY) != HAL_OK) {
+			return HAL_ERROR;
+		}
+	}
+
+	// Receive response
+	while ((HAL_GetTick() - tickstart) < timeout && idx < buffer_size - 1) {
+		uint8_t ch;
+
+		if (HAL_UART_Receive(esp_config.esp_uart, &ch, 1, 10) == HAL_OK) {
+			esp_binary_rx_buffer[idx++] = ch;
+			esp_binary_rx_buffer[idx] = '\0'; // Keep string safe for strstr
+
+			// Only check for patterns when we have enough data
+			if (idx >= error_len) {
+				// Check for ERROR response first (highest priority)
+				if (memcmp(&esp_binary_rx_buffer[idx - error_len], error_str, error_len) == 0) {
+					return HAL_ERROR;
+				}
+
+				// Check for expected ACK
+				if (!found && expect != NULL && idx >= expect_len) {
+					// Search only the recent portion of the buffer
+					size_t search_start = (idx > expect_len + 16) ? idx - expect_len - 16 : 0;
+					if (strstr((char *)&esp_binary_rx_buffer[search_start], expect) != NULL) {
+						found = true;
+
+						// Continue to collect any remaining data but with shorter timeout
+						timeout = HAL_GetTick() - tickstart + 100; // Give 100ms more
+					}
+				}
+			}
+		}
+	}
+
+	// Evaluate result
+	if (found) {
+		return HAL_OK;
+	}
+
+	if (idx == 0) {
+		return HAL_TIMEOUT;
+	}
+
+	return HAL_ERROR;
+}
+
+
+
+/**
+ * @brief Get current ESP8266 module status
+ * @return Current module status
+ */
+ESP_Status_t ESP_GetStatus(void)
+{
+	return esp_current_status;
+}
+
+/**
+ * @brief Publish data to MQTT topic
+ */
+void ESP_Publish(const char *topic, const char *message, uint8_t qos)
+{
+	HAL_UART_AbortReceive(esp_config.esp_uart);
+	// NOTE: Changed esp_config.esp_uart to esp_config_uart for global pointer compatibility.
+	if (esp_config.esp_uart == NULL || topic == NULL || message == NULL)
+	{
+		return;
+	}
+
+	uint16_t topic_len = strlen(topic);
+	uint16_t message_len = strlen(message);
+
+	// --- Calculate Remaining Length ---
+	// Topic length(2) + topic + message [+ MsgID(2) if QoS>0]
+	uint16_t remaining_length = 2 + topic_len + message_len + (qos ? 2 : 0);
+
+	// --- Build MQTT PUBLISH packet ---
+	uint8_t packet[512];
+	uint16_t index = 0;
+
+	uint8_t header = 0x30 | (qos << 1); // 0x30 for PUBLISH, QoS bits in position 1–2
+	packet[index++] = header;
+	packet[index++] = remaining_length;
+
+	// --- Topic ---
+	packet[index++] = (topic_len >> 8) & 0xFF;
+	packet[index++] = topic_len & 0xFF;
+	memcpy(&packet[index], topic, topic_len);
+	index += topic_len;
+
+	// --- Packet ID (if QoS > 0) ---
+	if (qos > 0)
+	{
+		packet[index++] = 0x00;
+		packet[index++] = 0x01; // Using a fixed Packet ID of 1
+	}
+
+	// --- Message payload ---
+	memcpy(&packet[index], message, message_len);
+	index += message_len;
+
+	// --- Send packet ---
+	char cipsendCmd[32];
+	sprintf(cipsendCmd, "AT+CIPSEND=%d", index);
+
+	// Uses the synchronous ESP_SendAT
+	if (ESP_SendAT(cipsendCmd, ">", 2000) != HAL_OK)
+	{
+		ESP_LOG_CRITICAL_ERROR(ESP_SERVER_ERROR_LOSE_CONNECTION, (uint8_t)ESP_ERROR_INVALID_CMD_RESPONSE, (uint8_t)PUBLISH_TOPIC);
+		return;
+	}
+
+	// NOTE: Changed esp_config.esp_uart to esp_config_uart
+	HAL_UART_Transmit(esp_config.esp_uart, packet, index, HAL_MAX_DELAY);
+
+	// --- Wait for PUBACK if QoS = 1 ---
+	if (qos == 1)
+	{
+		uint8_t rx_byte;
+		uint32_t start_tick = HAL_GetTick();
+
+		while (HAL_GetTick() - start_tick < 5000)  // 5 sec timeout
+		{
+			// NOTE: Changed esp_config.esp_uart to esp_config_uart
+			if (HAL_UART_Receive(esp_config.esp_uart, &rx_byte, 1, 100) == HAL_OK)
+			{
+				if (rx_byte == 0x40)
+				{
+					ESP_StartUARTReceive();
+					return;
+				}
+			}
+		}
+		ESP_LOG_CRITICAL_ERROR(ESP_SERVER_ERROR_LOSE_CONNECTION, (uint8_t)ESP_ERROR_TIMEOUT, (uint8_t)PUBLISH_TOPIC);
+	}
+}
+
+
+
+/**
+ * @brief Subscribe to MQTT topic for incoming messages
+ */
+HAL_StatusTypeDef ESP_Subscribe(const char *topic, uint8_t qos)
+{
+    // --- 1. Input Validation ---
+	if (esp_config.esp_uart == NULL || topic == NULL) {
+		return HAL_ERROR;
+	}
+
+	uint16_t topic_len = strlen(topic);
+	if (topic_len == 0) {
+		return HAL_ERROR;
+	}
+
+    // --- 2. Generate Unique Message ID (The Primary Fix) ---
+    // QoS 1 and 2 require a unique message ID (non-zero).
+    current_mqtt_msg_id++;
+    if (current_mqtt_msg_id == 0) {
+        current_mqtt_msg_id = 1; // Ensure ID is never 0 (reserved/invalid)
+    }
+    uint16_t message_id = current_mqtt_msg_id;
+
+    // --- 3. Calculate Remaining Length ---
+    // Remaining Length = Msg ID (2) + Topic Length Field (2) + Topic String (topic_len) + QoS Byte (1)
+	uint16_t remaining_length = 2 + 2 + topic_len + 1;
+
+	// Check if packet fits in buffer (Fixed Header size is 2 bytes for single-byte RL)
+	if (remaining_length + 2 > 256) {
+		return HAL_ERROR;
+	}
+
+    // NOTE: This assumes remaining_length < 128 (single byte encoding), which is safe for one topic.
+
+	// --- 4. Build SUBSCRIBE Packet ---
+	uint8_t packet[256];
+	uint16_t index = 0;
+
+	// Fixed header (SUBSCRIBE = 0x82 for QoS 1, or 0x80 for QoS 0)
+    // The top 4 bits are 1000 (SUBSCRIBE). The bottom 4 are flags (e.g., QoS).
+    // The control type is 0x80 (SUBSCRIBE) ORed with the flags.
+	packet[index++] = 0x82; // Assuming QoS 1 is intended here (0x80 | 0x02)
+	packet[index++] = (uint8_t)remaining_length; // Remaining Length
+
+    // Variable header (UNIQUE MESSAGE ID)
+	packet[index++] = (message_id >> 8) & 0xFF;  // Message ID MSB
+	packet[index++] = message_id & 0xFF;         // Message ID LSB
+
+    // Payload (List of Subscriptions)
+	packet[index++] = (topic_len >> 8) & 0xFF;  // Topic length MSB
+	packet[index++] = topic_len & 0xFF;         // Topic length LSB
+
+	// Topic String
+	memcpy(&packet[index], topic, topic_len);
+	index += topic_len;
+
+    // Requested QoS
+	packet[index++] = qos;
+
+    // --- 5. Send AT Command to Initiate Data Transfer ---
+	char cipsendCmd[32];
+	snprintf(cipsendCmd, sizeof(cipsendCmd), "AT+CIPSEND=%d", index);
+
+	HAL_StatusTypeDef ret = ESP_SendAT(cipsendCmd, ">", 2000);
+	if (ret != HAL_OK) {
+		// ... [error handling] ...
+		return ret;
+	}
+
+    // --- 6. Send Binary Data ---
+	ret = ESP_SendBinary(packet, index, "SEND OK", 5000);
+
+    // --- 7. Check Status and Handle Acknowledgment (CRITICAL) ---
+	if (ret == HAL_OK) {
+
+        // ***************************************************************
+        // CRITICAL SECTION: SUBACK WAITING AND STATE CLEARING
+        // This is the most likely reason for the second packet failing.
+        // ***************************************************************
+
+        // 1. Wait for SUBACK: The broker sends this packet (0x90) with the matching Message ID.
+        // If you don't read this response, the ESP module's buffer may overflow
+        // or its state machine will be confused, leading to a "malformed packet"
+        // error when you send the next CIPSEND command.
+
+        // Placeholder for your implementation:
+        // ret = ESP_WaitForSUBACK(message_id, 5000);
+
+        // 2. State Clearance Delay: Give the ESP module a small, fixed delay
+        // to complete its internal processing of the received SUBACK packet.
+        HAL_Delay(500); // 500ms is a safe buffer
+        // If you implement ESP_WaitForSUBACK, return its result here.
+	}
+	 else {
+		// Handle error case if needed
+		ESP_LOG_CRITICAL_ERROR(ESP_SERVER_ERROR_LOSE_CONNECTION, (uint8_t)ESP_ERROR_INVALID_CMD_RESPONSE, (uint8_t)SUBSCRIBE_TOPIC);
+	}
+	return ret;
+}
+
+/**
+ * @brief UART receive complete callback for ESP8266 communication
+ * @param huart UART handle that triggered the callback
+ * @note Collects bytes into esp_uart_rx_buffer, parses +IPD length, and processes full packet
+ */
+void ESP_UART_RxCallback(UART_HandleTypeDef *huart)
+{
+
+	// Guard clause: Ensure it's the correct UART instance
+	if (esp_config.esp_uart == NULL || huart->Instance != esp_config.esp_uart->Instance) {
+		return;
+	}
+
+	// --- State: Receiving a bulk payload (Triggered when the full transfer is COMPLETE) ---
+	if (esp_current_state == ESP_STATE_RECEIVING_PAYLOAD) {
+
+		uint8_t *payload_ptr = esp_uart_callback_buffer;
+		uint16_t current_payload_len = esp_expected_len;
+
+		bool parse_ok = true;
+
+
+		// 1. Ignore the first two bytes and check length
+		if (current_payload_len < 4) {
+			parse_ok = false;
+		}
+
+		if (parse_ok) {
+			payload_ptr += 2; // Skip first two bytes
+			current_payload_len -= 2;
+
+			// 2. Detect the Topic Length (Next 2 Bytes, Big-Endian)
+			// Topic Length = (MSB << 8) | LSB
+			uint16_t topic_len = (uint16_t)(payload_ptr[0] << 8) | payload_ptr[1];
+
+			payload_ptr += 2; // Move past topic length bytes
+			current_payload_len -= 2;
+
+			// 3. Validate Topic Length against remaining payload
+			if (current_payload_len < topic_len) {
+				parse_ok = false;
+			}
+
+			// 4. Extract and Store the Topic in Global Buffer
+			if (parse_ok) {
+
+				uint16_t copy_len = topic_len;
+
+				// Safety check: Truncate topic if it exceeds global buffer size
+				if (copy_len >= MAX_TOPIC_BUFFER_SIZE) {
+					copy_len = MAX_TOPIC_BUFFER_SIZE - 1;
+				}
+
+				// Original VLA (now removed): char topic_buffer[topic_len + 1];
+
+				memcpy(g_mqtt_topic, payload_ptr, copy_len);
+				g_mqtt_topic[copy_len] = '\0'; // Null-terminate the global buffer
+
+
+				payload_ptr += topic_len; // Move past the original topic string length
+				current_payload_len -= topic_len;
+
+				// 5. Extract and Store the Message (as String) in Global Buffer
+				uint16_t message_len = current_payload_len;
+
+				if (message_len > 0 && message_len < MAX_MESSAGE_BUFFER_SIZE) {
+					// Original VLA (now removed): char msg_buffer[message_len + 1];
+
+					// Copy to global message buffer and null-terminate
+					memcpy(g_mqtt_message, payload_ptr, message_len);
+					g_mqtt_message[message_len] = '\0'; // Null-terminate the global buffer
+
+					if (espMqttProcessTaskHandle != NULL) {
+						BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+						vTaskNotifyGiveFromISR(espMqttProcessTaskHandle, &xHigherPriorityTaskWoken);
+						portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+        			}
+
+
+
+				} else if (message_len == 0) {
+					// If you want to re-publish empty messages, the call would go here as well.
+				} else {
+					//[ESP] Error: Message length too large or invalid;
+				}
+			} // Now g_mqtt_topic and g_mqtt_message persist
+		}
+
+		// --- Cleanup and State Reset (Always executed after payload completion) ---
+
+		esp_expected_len = 0;
+		esp_current_state = ESP_STATE_PARSING_HEADER;
+
+		// Re-arm interrupt to look for the single byte that starts the next header ('+')
+		HAL_UART_Receive_IT(esp_config.esp_uart, &esp_rx_byte, 1);
+
+		return;
+	}
+
+	// --- State: Parsing the "+IPD,<len>:" header (Single byte reception) ---
+	if (esp_current_state == ESP_STATE_PARSING_HEADER) {
+		// ... (rest of the header parsing logic remains the same)
+		static uint8_t state = 0;
+		static char len_str[6];
+		static uint8_t len_idx = 0;
+		uint8_t ch = esp_rx_byte;
+
+		// --- Detect "+IPD,<len>:" pattern ---
+		switch (state) {
+		case 0: // Looking for '+'
+			if (ch == '+') state = 1;
+			break;
+		case 1: // Expecting 'I'
+			state = (ch == 'I') ? 2 : 0;
+			break;
+		case 2: // Expecting 'P'
+			state = (ch == 'P') ? 3 : 0;
+			break;
+		case 3: // Expecting 'D'
+			state = (ch == 'D') ? 4 : 0;
+			break;
+		case 4: // Expecting ','
+			state = (ch == ',') ? 5 : 0;
+			break;
+		case 5: // Collect digits until ':'
+			if (ch >= '0' && ch <= '9') {
+				if (len_idx < sizeof(len_str) - 1)
+					len_str[len_idx++] = ch;
+			} else if (ch == ':') {
+				len_str[len_idx] = '\0';
+				esp_expected_len = (uint16_t)atoi(len_str);
+
+				// Cleanup header parser state
+				len_idx = 0;
+				state = 0;
+
+				if (esp_expected_len > 0 && esp_expected_len <= ESP_UART_RX_BUFFER_SIZE) {
+
+					// **FIX: Length detected, IMMEDIATELY start bulk reception**
+					esp_current_state = ESP_STATE_RECEIVING_PAYLOAD;
+					HAL_UART_Receive_IT(esp_config.esp_uart, esp_uart_callback_buffer, esp_expected_len);
+
+					// We return here because the next interrupt will be for the full payload,
+					// and it needs to hit the RECEIVING_PAYLOAD state block above.
+					return;
+				}
+			} else {
+				// Invalid char -> reset parser state
+				state = 0;
+				len_idx = 0;
+			}
+			break;
+		}
+
+		// If still in the PARSING_HEADER state, re-arm for the next single byte.
+		HAL_UART_Receive_IT(esp_config.esp_uart, &esp_rx_byte, 1);
+	}
+}
+
+
+
+
+/**
+ * @brief Start UART receive interrupt for ESP8266 communication
+ * @note Call this function after ESP_SetConfig() to start receiving data
+ */
+void ESP_StartUARTReceive(void)
+{
+	if (esp_config.esp_uart == NULL)
+	{
+		return;
+	}
+
+
+
+	esp_rx_head = 0;
+	esp_rx_tail = 0;
+
+	HAL_UART_Receive_IT(esp_config.esp_uart, &esp_rx_byte, 1);
+}
+
+
+/**
+ * @brief Process received MQTT message by dispatching to appropriate handler
+ * @param topic The MQTT topic that was received
+ * @param message The message payload
+ * @note This is the main entry point for all MQTT message processing
+ */
+void ESP_ProcessMQTTMessage(const char* topic, const char* message)
+{
+    if (topic == NULL || message == NULL) {
+        return;
+    }
+    
+		/* Find and execute the appropriate handler */
+		const mqtt_topic_entry_t* entry = topic_handlers;
+		bool handler_found = false;
+    
+    while (entry->topic_pattern != NULL) {
+        if (strcmp(entry->topic_pattern, topic) == 0) {
+            /* Exact match found */
+            
+            entry->handler(message);
+            handler_found = true;
+            break;
+        }
+        entry++;
+    }
+    
+    /* If no handler found, use default handler */
+    if (!handler_found && entry->handler != NULL) {
+        entry->handler(message);
+    }
+}
+/******************************************************************************
+ *                          Private Functions                                 *
+ ******************************************************************************/
+
+/**
+ * @brief Drain any pending data in the ESP8266 UART RX buffer
+ *
+ * @details This function clears any residual data in the UART receive buffer
+ *          before starting communication. It prevents interference from
+ *          previous communication sessions or boot messages.
+ *
+ * @note This function should be called before initiating AT command sequences
+ *       to ensure clean communication.
+ */
+static void esp_drain_rx_buffer(void)
+{
+	if (esp_config.esp_uart == NULL) {
+		return;
+	}
+
+	uint8_t temp;
+	while (HAL_UART_Receive(esp_config.esp_uart, &temp, 1, 10) == HAL_OK);
+
+	// Clear internal buffer
+	esp_uart_rx_index = 0;
+}
+
+/**
+ * @brief Setup WiFi connection with configured credentials
+ * 
+ * @details Configures the ESP8266 in station mode and connects to the specified
+ *          WiFi network using the credentials stored in esp_config structure.
+ *          Updates the module status based on connection success.
+ *
+ * @return HAL_OK if WiFi connection successful, HAL_ERROR otherwise
+ *
+ * @note This function will update esp_current_status to ESP_STATUS_WIFI_CONNECTED
+ *       on successful connection or leave it in error state on failure.
+ */
+HAL_StatusTypeDef esp_setup_wifi_connection(void)
+{
+	char wifi_connect_cmd[128];
+
+	if (ESP_SendAT("AT+CWMODE=1", "OK", 2000) != HAL_OK) {
+		return HAL_ERROR;
+	}
+
+	snprintf(wifi_connect_cmd, sizeof(wifi_connect_cmd),
+			"AT+CWJAP=\"%s\",\"%s\"", esp_config.wifi_ssid, esp_config.wifi_password);
+
+	if (ESP_SendAT(wifi_connect_cmd, "WIFI GOT IP", ESP_WIFI_CONNECT_TIMEOUT) != HAL_OK) {
+		return HAL_ERROR;
+	}
+
+	esp_current_status = ESP_STATUS_WIFI_CONNECTED;
+	return HAL_OK;
+}
+
+/**
+ * @brief Setup TCP connection to MQTT broker
+ * 
+ * @details Configures single connection mode and establishes TCP connection
+ *          to the MQTT broker using the IP address and port specified in
+ *          the esp_config structure.
+ *
+ * @return HAL_OK if TCP connection successful, HAL_ERROR otherwise
+ *
+ * @note This function assumes WiFi connection is already established.
+ *       The connection parameters are taken from esp_config structure.
+ */
+HAL_StatusTypeDef esp_setup_tcp_connection(void)
+{
+	char tcp_connect_cmd[64];
+	char cipdomain_cmd[64];
+
+
+	if (ESP_SendAT("AT+CIPMUX=0", "OK", 2000) != HAL_OK) {
+		if(ESP_SendAT("AT+CIPSERVER=0", "OK", 2000) != HAL_OK){
+			return HAL_ERROR;
+		}
+		if(ESP_SendAT("AT+CIPMUX=0", "OK", 2000) != HAL_OK){  // ✅ CHECK RETURN VALUE
+			return HAL_ERROR;
+		}
+	}
+
+	snprintf(cipdomain_cmd, sizeof(cipdomain_cmd),
+	             "AT+CIPDOMAIN=\"%s\"", esp_config.mqtt_broker_ip);
+
+	if (ESP_SendAT(cipdomain_cmd, "OK",  5000) != HAL_OK) {
+			return HAL_ERROR;
+		}
+
+	snprintf(tcp_connect_cmd, sizeof(tcp_connect_cmd),
+			"AT+CIPSTART=\"TCP\",\"%s\",%d",
+			esp_config.mqtt_broker_ip, esp_config.mqtt_broker_port);
+
+	if (ESP_SendAT(tcp_connect_cmd, "CONNECT", ESP_TCP_CONNECT_TIMEOUT) != HAL_OK) {
+		return HAL_ERROR;
+	}
+
+	return HAL_OK;
+}
+
+/**
+ * @brief Send MQTT CONNECT packet to establish protocol connection
+ * 
+ * @details Constructs and sends the MQTT CONNECT packet according to MQTT v3.1.1
+ *          specification. The packet includes protocol name, version, flags,
+ *          keep-alive timer, and client identifier.
+ *
+ * @return HAL_OK if packet sent successfully, HAL_ERROR otherwise
+ *
+ * @warning This function uses AT+CIPSEND command which requires the TCP connection
+ *          to be already established before calling this function.
+ */
+HAL_StatusTypeDef esp_send_mqtt_connect_packet(void)
+{
+    // --- Configuration ---
+    const size_t username_len = strlen(MQTT_PACKET_USERNAME);
+    const size_t password_len = strlen(MQTT_PACKET_PASSWORD);
+
+    // Convert the Keep Alive value (e.g., 60 seconds) into a two-byte array (MSB, LSB)
+    // 60 decimal is 0x003C in hexadecimal.
+    const uint8_t keep_alive[] = {
+        (uint8_t)(MQTT_PACKET_KEEPALIVE >> 8),  // MSB
+        (uint8_t)(MQTT_PACKET_KEEPALIVE & 0xFF) // LSB
+    };
+
+    // --- MQTT Packet Construction Components ---
+
+    const uint8_t fixed_header_type = 0x10; // CONNECT packet type
+
+    // Variable Header
+    const uint8_t protocol_name[] = {0x00, 0x04, 'M', 'Q', 'T', 'T'}; // Protocol Name Length (0x04), "MQTT"
+    const uint8_t protocol_level = 0x04;                               // MQTT v3.1.1
+    const uint8_t connect_flags_base = 0x02;                           // Clean session (Bit 1)
+    const uint8_t connect_flags_user = 0x80;                           // Username Flag (Bit 7)
+    const uint8_t connect_flags_pass = 0x40;                           // Password Flag (Bit 6)
+    const uint8_t client_id_len[] = {0x00, 0x05};                      // Client ID length (5 bytes)
+    const char client_id[] = {'S', 'T', 'M', '3', '2'};                // Client ID: "STM32"
+
+    // --- Remaining Length Calculation (Unchanged from previous logic) ---
+
+    // 1. Variable Header length: (Protocol Name + Level + Flags + KeepAlive)
+    size_t remaining_len = sizeof(protocol_name) + sizeof(protocol_level) + 1 + sizeof(keep_alive);
+
+    // 2. Client ID length: (Length field + Value)
+    remaining_len += sizeof(client_id_len) + sizeof(client_id);
+
+    // 3. Username length: (Length field + Value)
+    remaining_len += 2 + username_len;
+
+    // 4. Password length: (Length field + Value)
+    remaining_len += 2 + password_len;
+
+    // Basic check for single-byte Remaining Length encoding
+    if (remaining_len > 127) {
+        return HAL_ERROR;
+    }
+
+    // --- Dynamic Packet Assembly ---
+
+    const size_t packet_size = 2 + remaining_len;
+    uint8_t mqttConnect[packet_size];
+    uint8_t *ptr = mqttConnect;
+
+    // 1. Fixed Header
+    *ptr++ = fixed_header_type;
+    *ptr++ = (uint8_t)remaining_len; // Single-byte remaining length
+
+    // 2. Variable Header
+    memcpy(ptr, protocol_name, sizeof(protocol_name));
+    ptr += sizeof(protocol_name);
+
+    *ptr++ = protocol_level;
+
+    // Set Connect Flags (Clean Session | Username Flag | Password Flag)
+    *ptr++ = connect_flags_base | connect_flags_user | connect_flags_pass;
+
+    // **CHANGE IS HERE:** Use the dynamic 'keep_alive' array
+    memcpy(ptr, keep_alive, sizeof(keep_alive));
+    ptr += sizeof(keep_alive);
+
+    // 3. Payload - Client ID
+    memcpy(ptr, client_id_len, sizeof(client_id_len));
+    ptr += sizeof(client_id_len);
+    memcpy(ptr, client_id, sizeof(client_id));
+    ptr += sizeof(client_id);
+
+    // 4. Payload - Username
+    *ptr++ = (uint8_t)(username_len >> 8);
+    *ptr++ = (uint8_t)(username_len & 0xFF);
+    memcpy(ptr, MQTT_PACKET_USERNAME, username_len);
+    ptr += username_len;
+
+    // 5. Payload - Password
+    *ptr++ = (uint8_t)(password_len >> 8);
+    *ptr++ = (uint8_t)(password_len & 0xFF);
+    memcpy(ptr, MQTT_PACKET_PASSWORD, password_len);
+
+    // --- ESP Send Logic (Unchanged) ---
+
+	char cipsendCmd[32];
+	sprintf(cipsendCmd, "AT+CIPSEND=%d", (int)packet_size);
+
+	// Step 1: Send AT+CIPSEND and wait for '>'
+	if (ESP_SendAT(cipsendCmd, ">", 5000) != HAL_OK) {
+		return HAL_ERROR;
+	}
+
+	// Step 2: Send MQTT CONNECT packet using the binary sender
+	if (ESP_SendBinary(mqttConnect, packet_size, "\x20", 8000) != HAL_OK) {
+		return HAL_ERROR;
+	}
+
+	return HAL_OK;
+}
+
+
+void PingREQ(void){
+
+	HAL_UART_AbortReceive(esp_config.esp_uart);
+
+	if (esp_config.esp_uart == NULL)
+	{
+		return;
+	}
+
+	char cmd[32];
+	uint8_t packet[2];
+
+	packet[0] = 0xC0; 	packet[1] = 0x00;  // PINGREQ
+	snprintf(cmd, sizeof(cmd), "AT+CIPSEND=2");
+
+	if(ESP_SendAT(cmd, ">", 2000) != HAL_OK){
+		ESP_LOG_CRITICAL_ERROR(ESP_SERVER_ERROR_LOSE_CONNECTION, (uint8_t)ESP_ERROR_INVALID_CMD_RESPONSE, (uint8_t)PUBLISH_TOPIC);
+		return;
+	}
+
+	if(ESP_SendBinary(packet, 2, "\xD0", 2000) != HAL_OK){
+		ESP_LOG_CRITICAL_ERROR(ESP_SERVER_ERROR_LOSE_CONNECTION, (uint8_t)ESP_ERROR_TIMEOUT, (uint8_t)PUBLISH_TOPIC);
+		return;
+	}
+	ESP_StartUARTReceive();
+}
+
+void ResetMessageBuffer(void) {
+	memset(g_mqtt_message, 0, MAX_MESSAGE_BUFFER_SIZE);
+	memset(g_mqtt_topic, 0, MAX_MESSAGE_BUFFER_SIZE);
+}
+
+/**
+ * @brief Handle vending request control messages
+ * @param message The message payload
+ */
+static void handle_vend_request_topic(const char* message)
+{    
+	uint16_t vend_amount = 0;
+	/* Parse the vending amount from message */
+    if (!ESP_ParseVendAmount(message, &vend_amount)) {
+        return;
+    }
+	balance_setValue = vend_amount;
+	SetVendReq_State(VEND_REQ_STATE_ENABLE);
+}
+static void handle_mainSubscribeTopic(const char *message)
+{
+	/* Find and execute the appropriate handler */
+    const mqtt_keyword_handler_t* entry = SubscribeMainTopicKeywordHandlers;
+	while (entry->keyword != NULL) {
+		if (strstr(message, entry->keyword) != NULL) {
+			/* Match found */
+			entry->handler(message);
+			break;
+		}
+		entry++;
+	}
+}
+/**
+ * @brief Handle ping/health check messages
+ * @param message The message payload
+ */
+static void handle_ping_topic(const char* message)
+{
+    /* Always respond to ping with pong */
+    ESP_RequestPublish(topic_handlers[ESP_TOPIC_MAIN_PUBLISH].topic_pattern, "ALIVE", 1);
+}
+
+/**
+ * @brief Default handler for unknown topics
+ * @param message The message payload
+ */
+static void handle_unknown_topic(const char* message)
+{    
+    /* Optionally log to a debug topic */
+    ESP_RequestPublish(topic_handlers[ESP_TOPIC_MAIN_PUBLISH].topic_pattern, "unknownTopic", 1);
+}
+
+/**
+ * @brief Default handler for unknown topics
+ * @param message The message payload
+ */
+static void handle_unknown_keyword(const char* message)
+{    
+    /* Optionally log to a debug topic */
+    ESP_RequestPublish(topic_handlers[ESP_TOPIC_MAIN_PUBLISH].topic_pattern, "unknownTopic", 1);
+}
+/**
+ * @brief Parse vending amount from message
+ * @details Extracts numeric value from messages like "Vend:100"
+ * @param message Message string to parse
+ * @param amount Pointer to store parsed amount
+ * @return true if parsing successful, false otherwise
+ */
+static bool ESP_ParseVendAmount(const char *message, uint16_t *amount)
+{
+    if (message == NULL || amount == NULL) {
+        return false;
+    }
+    
+    /* Find the colon separator */
+    const char *colon = strchr(message, ':');
+    if (colon == NULL) {
+        return false;
+    }
+    
+    /* Move past the colon */
+    const char *amount_str = colon + 1;
+    
+    /* Skip leading whitespace */
+    while (*amount_str == ' ' || *amount_str == '\t') {
+        amount_str++;
+    }
+    
+    /* Validate that we have digits */
+    if (*amount_str < '0' || *amount_str > '9') {
+        return false;
+    }
+    
+    /* Convert string to integer */
+    char *endptr;
+    long parsed_value = strtol(amount_str, &endptr, 10);
+    
+    /* Validate conversion */
+    if (endptr == amount_str) {
+        return false;
+    }
+    
+    /* Check for valid range (0-65535 for uint16_t) */
+    if (parsed_value < 0 || parsed_value > UINT16_MAX) {
+        return false;
+    }
+    
+    /* Success */
+    *amount = (uint16_t)parsed_value;    
+    return true;
+}
+/**
+ * @brief Save WiFi configuration to flash memory
+ * @param ssid The WiFi SSID (max 31 chars)
+ * @param password The WiFi password (max 63 chars)
+ * @note Null terminators are placed immediately after string data for proper strcmp() comparison
+ */
+void SaveWiFiConfig(const char *ssid, const char *password)
+{
+    uint8_t buffer[96] = {0};  /* 4-byte aligned size */
+    
+    if (ssid == NULL || password == NULL) {
+        return;
+    }
+    
+    /* Copy SSID and place null terminator right after the string */
+    size_t ssid_len = strlen(ssid);
+    if (ssid_len > 31) ssid_len = 31;  /* Max 31 chars for SSID */
+    
+    strncpy((char *)buffer, ssid, ssid_len);
+    buffer[ssid_len] = '\0';  /* Null terminator immediately after string */
+    
+    /* Copy password and place null terminator right after the string */
+    size_t password_len = strlen(password);
+    if (password_len > 63) password_len = 63;  /* Max 63 chars for password */
+    
+    strncpy((char *)buffer + 32, password, password_len);
+    buffer[32 + password_len] = '\0';  /* Null terminator immediately after string */
+    
+    /* Erase sector first */
+    flash_status_t erase_status = FLASH_Erase(FLASH_CONFIG_ADDR);
+    if (erase_status != FLASH_OK) {
+        return;
+    }
+    
+    /* Write new data (must be multiple of 4) */
+    flash_status_t write_status = FLASH_Write(
+        FLASH_CONFIG_ADDR,
+        buffer,
+        96  /* Size must be multiple of 4 */
+    );
+    
+    if (write_status != FLASH_OK) {
+    }
+}
+
+/**
+ * @brief Check if Flash sector is erased
+ */
+static bool FLASH_IsErased(uint32_t addr, uint32_t size)
+{
+    uint8_t *ptr = (uint8_t *)addr;
+    
+    for (uint32_t i = 0; i < size; i++) {
+        if (ptr[i] != 0xFF) {
+            return false;  /* Found non-0xFF byte, not erased */
+        }
+    }
+    return true;  /* All bytes are 0xFF, is erased */
+}
+
+/**
+ * @brief Load WiFi configuration from flash memory
+ * @param ssid Buffer to store the WiFi SSID (must be at least 32 bytes)
+ * @param password Buffer to store the WiFi password (must be at least 64 bytes)
+ * @note Reads from flash and relies on null terminators placed during save for safe strcmp()
+ */
+static void LoadWiFiConfig(char *ssid, char *password)
+{
+    uint8_t buffer[96] = {0};
+    
+    if (ssid == NULL || password == NULL) {
+        return;
+    }
+    
+    flash_status_t status = FLASH_Read(FLASH_CONFIG_ADDR, buffer, 96);
+	 
+    if (status == FLASH_OK) {
+		/* Check if Flash is erased (all 0xFF) */
+        if (FLASH_IsErased(FLASH_CONFIG_ADDR, 96)) {
+            strcpy(ssid, ESP_DEFAULT_UNCONFIGURED_SSID);
+            strcpy(password, ESP_DEFAULT_UNCONFIGURED_PASSWORD);
+            return;
+        }
+        /* Copy SSID - strcpy stops at null terminator placed during save */
+        strcpy(ssid, (char *)buffer);
+        
+        /* Copy password - strcpy stops at null terminator placed during save */
+        strcpy(password, (char *)buffer + 32);
+    } else {
+        /* On error, set to default unconfigured state */
+        strcpy(ssid, ESP_DEFAULT_UNCONFIGURED_SSID);
+        strcpy(password, ESP_DEFAULT_UNCONFIGURED_PASSWORD);
+    }
+}
+
+static void clear_wifi_credentials(void)
+{
+    memset(ESP8266_DefaultConfig.wifi_ssid, 0, sizeof(ESP8266_DefaultConfig.wifi_ssid));
+    memset(ESP8266_DefaultConfig.wifi_password, 0, sizeof(ESP8266_DefaultConfig.wifi_password));
+}
+
+HAL_StatusTypeDef ESP_AP_Mode(void){
+	HAL_Delay(2000);
+	// Validate configuration
+	if (esp_config.esp_uart == NULL) {
+		ESP_LOG_CRITICAL_ERROR(ESP_ERROR_UART_NOT_CONFIGURED, NO_DATA_PRESENT, NO_DATA_PRESENT);
+	}
+
+	char command_buffer[128];
+
+	// Basic ESP8266 setup
+	if (ESP_SendAT("AT", "OK", ESP_AT_COMMAND_TIMEOUT) != HAL_OK) {
+		esp_current_status = ESP_STATUS_ERROR;
+		return HAL_ERROR;
+	}
+
+	// 1. Set Wi-Fi Mode to AP (Mode 2)
+	if (ESP_SendAT("AT+CWMODE=2", "OK", 2000) != HAL_OK) {
+		return HAL_ERROR;
+	}
+
+	// 2. Configure Static IP address for AP: AT+CIPAP="IP","Gateway","Netmask"
+	snprintf(command_buffer, sizeof(command_buffer),
+			"AT+CIPAP=\"%s\",\"%s\",\"%s\"",
+			"192.168.10.1",     // Static IP
+			"192.168.10.1",     // Gateway
+			"255.255.255.0");   // Netmask
+
+	if (ESP_SendAT(command_buffer, "OK", 2000) != HAL_OK) {
+		return HAL_ERROR;
+	}
+
+	// 3. Set up the AP: AT+CWSAP="SSID","Password",Channel,Encryption
+	snprintf(command_buffer, sizeof(command_buffer),
+			"AT+CWSAP=\"%s\",\"%s\",%d,%d",
+			"ESP_WIFI",       // SSID
+			"987654321",      // Password
+			5,                // Channel (5)
+			3);               // WPA2_PSK (3)
+
+	if (ESP_SendAT(command_buffer, "OK", ESP_WIFI_CONNECT_TIMEOUT) != HAL_OK) {
+		return HAL_ERROR;
+	}
+
+	// 4. Enable Multiple Connections
+	if (ESP_SendAT("AT+CIPMUX=1", "OK", 2000) != HAL_OK) {
+		return HAL_ERROR;
+	}
+
+	// 5. Start TCP Server on Port 80
+	if (ESP_SendAT("AT+CIPSERVER=1,80", "OK", 2000) != HAL_OK) {
+		return HAL_ERROR;
+	}
+
+	return HAL_OK;
+}
+
+HAL_StatusTypeDef ESP_WaitForCredentials(void)
+{
+	// === State Machine Definition ===
+	enum {
+		STATE_WAIT_IPD,
+		STATE_PARSE_HEADER,
+		STATE_WAIT_PAYLOAD
+	} state = STATE_WAIT_IPD;
+
+	// === UART Buffer and Index ===
+	static char rxbuf[512];
+	static size_t idx = 0;
+
+	// === State Variables ===
+	static long expected_len = 0;
+	static size_t payload_start_offset = 0;
+
+	//char debug_msg[128]; // Kept for potential use/commenting if needed
+
+	/* Clear and Reset for THIS call */
+	idx = 0;
+	rxbuf[0] = '\0';
+
+	while (1) // Loop forever until HAL_OK is returned
+	{
+		/* --- 1. POLL UART FOR NEW BYTES --- */
+		uint8_t ch;
+		// Non-blocking read (20ms timeout)
+		if (HAL_UART_Receive(esp_config.esp_uart, &ch, 1, 20) == HAL_OK)
+		{
+			if (idx < sizeof(rxbuf) - 1)
+			{
+				rxbuf[idx++] = (char)ch;
+				rxbuf[idx]   = '\0';
+			}
+			else
+			{
+				idx = 0;
+				rxbuf[0] = '\0';
+				state = STATE_WAIT_IPD;
+				continue;
+			}
+		}
+
+		/* --- 2. STATE MACHINE PROCESSING --- */
+		switch(state)
+		{
+		case STATE_WAIT_IPD:
+		{
+			char *hdr = strstr(rxbuf, "+IPD,");
+			if (hdr != NULL)
+			{
+				// Shift buffer to remove garbage before +IPD
+				if (hdr != rxbuf) {
+					size_t shift_len = idx - (hdr - rxbuf);
+					memmove(rxbuf, hdr, shift_len + 1);
+					idx = shift_len;
+					rxbuf[idx] = '\0';
+				}
+
+				payload_start_offset = 0;
+				expected_len = 0;
+				state = STATE_PARSE_HEADER;
+
+				// Aggressively read to pull in the rest of the header/payload start
+				size_t bytes_to_read = 30;
+				uint8_t temp_ch;
+				uint32_t proactive_start = HAL_GetTick();
+
+				while (idx < sizeof(rxbuf) - 1 && bytes_to_read > 0 && (HAL_GetTick() - proactive_start) < 200) {
+					if (HAL_UART_Receive(esp_config.esp_uart, &temp_ch, 1, 5) == HAL_OK)
+					{
+						rxbuf[idx++] = (char)temp_ch;
+						rxbuf[idx] = '\0';
+						bytes_to_read--;
+					}
+				}
+			}
+			break;
+		}
+
+		case STATE_PARSE_HEADER:
+		{
+			char *p = rxbuf + 5; // skip "+IPD,"
+			char *endptr;
+			long link_id;
+
+			if ((size_t)(p - rxbuf) >= idx) break;
+
+			// 1. Parse Link ID
+			link_id = strtol(p, &endptr, 10);
+			if (endptr == p || *endptr != ',') {
+				break; // Incomplete/invalid ID
+			}
+
+			p = endptr + 1;
+
+			if ((size_t)(p - rxbuf) >= idx) break;
+
+			// 2. Parse Payload Length
+			long payload_len = strtol(p, &endptr, 10);
+			if (endptr == p || *endptr != ':' || payload_len <= 0) {
+				break; // Incomplete/invalid length
+			}
+
+			// 3. Header is complete!
+			expected_len = payload_len;
+			payload_start_offset = (endptr + 1) - rxbuf;
+
+			state = STATE_WAIT_PAYLOAD;
+			break;
+		}
+
+		case STATE_WAIT_PAYLOAD:
+		{
+			long received_len = (long)(idx - payload_start_offset);
+
+			// Check if enough data is available
+			if (received_len >= expected_len)
+			{
+				char *payload = rxbuf + payload_start_offset;
+				payload[expected_len] = '\0';
+
+				/* --- FINAL PARSING: SSID:PASS --- */
+				char *sep = strchr(payload, ':');
+				if (sep != NULL)
+				{
+					size_t ssid_len = sep - payload;
+					char *pass = sep + 1;
+					size_t pass_len = expected_len - (ssid_len + 1);
+
+					// Boundary checks
+					if (ssid_len > 0 && ssid_len < MAX_SSID_LEN && pass_len > 0 && pass_len < MAX_PASS_LEN)
+					{
+						// Copy credentials
+						memcpy(ESP8266_DefaultConfig.wifi_ssid, payload, ssid_len);
+						ESP8266_DefaultConfig.wifi_ssid[ssid_len] = '\0';
+						memcpy(ESP8266_DefaultConfig.wifi_password, pass, pass_len);
+						ESP8266_DefaultConfig.wifi_password[pass_len] = '\0';
+
+						// Trim trailing whitespace from SSID/PASS
+						size_t len_ssid = strnlen(ESP8266_DefaultConfig.wifi_ssid, MAX_SSID_LEN);
+						while (len_ssid > 0) {
+							char c = ESP8266_DefaultConfig.wifi_ssid[len_ssid - 1];
+							if (c == ' ' || c == '\r' || c == '\n') {
+								len_ssid--;
+								ESP8266_DefaultConfig.wifi_ssid[len_ssid] = '\0';
+							} else {
+								break;
+							}
+						}
+
+						size_t len_pass = strnlen(ESP8266_DefaultConfig.wifi_password, MAX_PASS_LEN);
+						while (len_pass > 0) {
+							char c = ESP8266_DefaultConfig.wifi_password[len_pass - 1];
+							if (c == ' ' || c == '\r' || c == '\n') {
+								len_pass--;
+								ESP8266_DefaultConfig.wifi_password[len_pass] = '\0';
+							} else {
+								break;
+							}
+						}
+
+						// *** FINAL SUCCESS ***
+						return HAL_OK;
+					}
+				}
+
+				/* Invalid format, reset buffer and state */
+				idx = 0;
+				rxbuf[0] = '\0';
+				state = STATE_WAIT_IPD;
+			}
+			break;
+		}
+		}
+	}
+}
