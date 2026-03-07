@@ -22,6 +22,7 @@
 typedef enum {
     LED_CHANNEL_DIAG,           /* Diagnostic LED (errors/warnings) */
     LED_CHANNEL_COMM,           /* Communication LED (WiFi/MQTT status) */
+    LED_CHANNEL_PWR,           /* Power LED (power status) */
     LED_CHANNEL_MAX             /* Must be last */
 } led_channel_t;
 
@@ -48,7 +49,7 @@ void LED_CONTROLLER_Init(void);
 
 /**
  * @brief Turn LED on
- * @param channel LED channel (LED_CHANNEL_DIAG or LED_CHANNEL_COMM)
+ * @param channel LED channel (LED_CHANNEL_DIAG or LED_CHANNEL_COMM or LED_CHANNEL_PWR)
  */
 void LED_On(led_channel_t channel);
 
@@ -87,8 +88,9 @@ void LED_StopBlinking(led_channel_t channel);
 /**
  * @brief Update LED blinking state (call periodically, e.g., every 50ms)
  * @param delta_ms Time elapsed since last call
+ * @param channel LED channel
  */
-void LED_PeriodicUpdate(uint32_t delta_ms);
+void LED_PeriodicUpdate(uint32_t delta_ms, led_channel_t channel);
 
 /**
  * @brief Set LED blink mode

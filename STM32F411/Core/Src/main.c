@@ -155,6 +155,7 @@ int main(void)
   FLASH_Init();       /* Initialize Flash driver */
   LED_CONTROLLER_Init(); /* Initialize LED controller */
   SYS_InitLogger();   /* Initialize system logger */
+  LED_On(LED_CHANNEL_PWR); /* Indicate power on */
   ESP_Init();         /* Initialize ESP8266 module */
   MDB_BusInit();      /* Initialize MDB bus */
   /* USER CODE END 2 */
@@ -369,27 +370,20 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, DIAG_LED_Pin|COMM_LED_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin : DIAG_LED_Pin */
-  GPIO_InitStruct.Pin = DIAG_LED_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(DIAG_LED_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : COMM_LED_Pin */
-  GPIO_InitStruct.Pin = COMM_LED_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(COMM_LED_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_WritePin(GPIOB, PWR_LED_Pin|COMM_LED_Pin|DIAG_LED_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : RESET_BUTTON_Pin */
   GPIO_InitStruct.Pin = RESET_BUTTON_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(RESET_BUTTON_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PWR_LED_Pin COMM_LED_Pin DIAG_LED_Pin */
+  GPIO_InitStruct.Pin = PWR_LED_Pin|COMM_LED_Pin|DIAG_LED_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
   HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);

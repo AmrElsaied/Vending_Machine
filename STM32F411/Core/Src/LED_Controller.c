@@ -28,7 +28,7 @@ typedef struct {
  *                          Private Variables
  ******************************************************************************/
 
-static led_instance_t leds[2];
+static led_instance_t leds[LED_CHANNEL_MAX];
 
 /******************************************************************************
  *                    Private Helper Functions
@@ -56,10 +56,18 @@ void LED_CONTROLLER_Init(void)
     leds[LED_CHANNEL_COMM].blink_timer = 0;
     leds[LED_CHANNEL_COMM].gpio_port = COMM_LED_GPIO_Port;
     leds[LED_CHANNEL_COMM].gpio_pin = COMM_LED_Pin;
+    /* */
+    /* Initialize PWR LED */
+    leds[LED_CHANNEL_PWR].blink_mode = LED_BLINK_MODE_TOGGLE;
+    leds[LED_CHANNEL_PWR].blink_period_ms = 0;
+    leds[LED_CHANNEL_PWR].blink_timer = 0;
+    leds[LED_CHANNEL_PWR].gpio_port = PWR_LED_GPIO_Port;
+    leds[LED_CHANNEL_PWR].gpio_pin = PWR_LED_Pin;
     
     /* Apply initial state to GPIO */
     LED_Off(LED_CHANNEL_DIAG);
     LED_Off(LED_CHANNEL_COMM);
+    LED_Off(LED_CHANNEL_PWR);
 }
 
 /**
@@ -67,7 +75,7 @@ void LED_CONTROLLER_Init(void)
  */
 void LED_On(led_channel_t channel)
 {
-    if (channel >= 2) return;
+    if (channel >= LED_CHANNEL_MAX) return;
     
     leds[channel].state = LED_STATE_ON;
     
@@ -79,7 +87,7 @@ void LED_On(led_channel_t channel)
  */
 void LED_Off(led_channel_t channel)
 {
-    if (channel >= 2) return;
+    if (channel >= LED_CHANNEL_MAX) return;
     
     leds[channel].state = LED_STATE_OFF;
     
@@ -149,18 +157,18 @@ void LED_StopBlinking(led_channel_t channel)
 /**
  * @brief Update LED blinking state (call periodically)
  */
-void LED_PeriodicUpdate(uint32_t delta_ms)
+void LED_PeriodicUpdate(uint32_t delta_ms, led_channel_t channel)
 {
-    for (int i = 0; i < LED_CHANNEL_MAX; i++) {
-        if (leds[i].blink_mode != LED_BLINK_MODE_BLINK || leds[i].blink_period_ms == 0) {
-            continue;
-        }
+    if (channel >= LED_CHANNEL_MAX) return;
+    
+    if (leds[channel].blink_mode != LED_BLINK_MODE_BLINK || leds[channel].blink_period_ms == 0) {
+        return;
+    }
         
-        leds[i].blink_timer += delta_ms;
-        
-        if (leds[i].blink_timer >= (leds[i].blink_period_ms)) {
-            leds[i].blink_timer = 0;
-            LED_Toggle((led_channel_t)i);
-        }
+    leds[channel].blink_timer += delta_ms;
+    
+    if (leds[channel].blink_timer >= (leds[channel].blink_period_ms)) {
+        leds[channel].blink_timer = 0;
+        LED_Toggle(channel);
     }
 }

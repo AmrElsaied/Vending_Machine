@@ -141,7 +141,7 @@ bool PERIODIC_TASK_IsEnabled(periodic_module_t module_id)
 
 /**
  * @brief Execute all registered periodic tasks
- * @note Call every 10ms from main periodic task
+ * @note Call every 100ms from main periodic task
  */
 void PERIODIC_TASK_Execute(void)
 {
@@ -206,16 +206,12 @@ void BUTTON_PeriodicCallback(uint32_t delta_ms)
     } else {
         /* Button released */
         if (button_press_start_time > 0) {
-            uint32_t press_duration = current_time - button_press_start_time;
-
-            if (press_duration >= BUTTON_LONG_PRESS_TIME_MS) {
-
+            if (button_long_press_notified) {
                 /* Clear WiFi credentials */
                 SaveWiFiConfig(ESP_DEFAULT_UNCONFIGURED_SSID, ESP_DEFAULT_UNCONFIGURED_PASSWORD);
                 /* Reset the system */
                 HAL_NVIC_SystemReset();
             }
-
             button_press_start_time = 0;
             button_long_press_notified = false;
         }
@@ -238,7 +234,7 @@ void PERIODIC_TASK_CommunicationMonotoringCallback(uint32_t delta_ms)
             LED_Blink(LED_CHANNEL_COMM, 900);  /* Blink every 900ms */
             Comm_Led_Blinking = true;
         }
-        LED_PeriodicUpdate(delta_ms);
+        LED_PeriodicUpdate(delta_ms, LED_CHANNEL_COMM);  /* Update blinking state */
     }
     else {
         LED_StopBlinking(LED_CHANNEL_COMM);

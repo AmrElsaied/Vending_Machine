@@ -375,6 +375,7 @@ static void SYS_HandleCriticalErrorAction(Error_code_t error_code) {
                     if (HAL_GetTick() - wifi_retry_timer >= 5000) {
                         wifi_retry_timer = HAL_GetTick();
                         if (esp_setup_wifi_connection() == HAL_OK) {
+                            LED_Off(LED_CHANNEL_DIAG);
                             break;
                         }
                     }
@@ -392,6 +393,7 @@ static void SYS_HandleCriticalErrorAction(Error_code_t error_code) {
                     if (HAL_GetTick() - tcp_retry_timer >= 5000) {
                         tcp_retry_timer = HAL_GetTick();
                         if (esp_setup_tcp_connection() == HAL_OK) {
+                            LED_Off(LED_CHANNEL_DIAG);
                             break; // Exit loop if successful
                         }
                     }
@@ -409,6 +411,7 @@ static void SYS_HandleCriticalErrorAction(Error_code_t error_code) {
                     if (HAL_GetTick() - mqtt_retry_timer >= 5000) {
                         mqtt_retry_timer = HAL_GetTick();
                         if (esp_send_mqtt_connect_packet() == HAL_OK) {
+                            LED_Off(LED_CHANNEL_DIAG);
                             break; // Exit loop if successful
                         }
                     }
@@ -425,6 +428,7 @@ static void SYS_HandleCriticalErrorAction(Error_code_t error_code) {
                     esp_init_retry_timer = HAL_GetTick();
                     ESP_Init();
                     if (esp_current_status == ESP_STATUS_MQTT_CONNECTED) {
+                        LED_Off(LED_CHANNEL_DIAG);
                         break; // Exit loop if successful
                     }
                 }
@@ -441,6 +445,7 @@ static void SYS_HandleCriticalErrorAction(Error_code_t error_code) {
                     if (HAL_GetTick() - esp_internal_comm_retry_timer >= 5000) {
                         esp_internal_comm_retry_timer = HAL_GetTick();
                         if (ESP_SendAT("AT", "OK", ESP_AT_COMMAND_TIMEOUT) == HAL_OK) {
+                            LED_Off(LED_CHANNEL_DIAG);
                             break; // Exit loop if successful
                         }
                     }
