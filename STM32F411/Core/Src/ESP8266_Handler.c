@@ -22,6 +22,8 @@
 #include "Flash_Driver.h"
 #include "LED_Controller.h"
 #include "SYS_Logger.h"
+#include "system_tasks.h"
+#include <stdlib.h>
 /******************************************************************************
  *                             Module Config                                  *
  ******************************************************************************/
@@ -139,7 +141,8 @@ void ESP_Init(void)
 	if (strcmp(ESP8266_DefaultConfig.wifi_ssid, ESP_DEFAULT_UNCONFIGURED_SSID) == 0 ||
 		strcmp(ESP8266_DefaultConfig.wifi_password, ESP_DEFAULT_UNCONFIGURED_PASSWORD) == 0) {
 		esp_current_status = ESP_STATUS_CONFIGURING;
-		// will be asked to configure via HTTP requests through the application
+		LED_Off(LED_CHANNEL_COMM); // Indicate waiting for configuration
+		LED_On(LED_CHANNEL_DIAG); // Indicate configuration mode
 		//Start the Access Point mode
 		ESP_AP_Mode();
 		// Get the SSID and Password from the user via HTTP server
@@ -1048,6 +1051,9 @@ static void handle_vend_request_topic(const char* message)
     if (!ESP_ParseVendAmount(message, &vend_amount)) {
         return;
     }
+	// TODO check on the cashless state first
+	// if == ENABLE -> set the vendd request
+	// if != ENABLE -> send failure code
 	balance_setValue = vend_amount;
 	SetVendReq_State(VEND_REQ_STATE_ENABLE);
 }
