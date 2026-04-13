@@ -52,7 +52,7 @@ static void handle_cmd_0x0074(uint16_t *RxBuffer, uint8_t cmd_length);
 static void handle_cmd_0x0077(uint16_t *RxBuffer, uint8_t cmd_length);
 static void handle_cmd_0x0075(uint16_t *RxBuffer, uint8_t cmd_length);
 static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length);
-
+static void handle_cmd_0x01D7(uint16_t *RxBuffer, uint8_t cmd_length);
 /* MDB_ReceiveCommand helper functions */
 static bool MDB_ProcessAck(uint16_t word);
 static uint8_t MDB_DetectCommand(uint16_t word);
@@ -96,7 +96,8 @@ const CommandEntry_t command_table[] = {
     {handle_cmd_0x0074},             /* Command 0x0074 handler */
     {handle_cmd_0x0077},             /* Command 0x0077 handler */
     {handle_cmd_0x0075},             /* Command 0x0075 handler */
-    {handle_cmd_0x0076}              /* Command 0x0076 handler */
+    {handle_cmd_0x0076},             /* Command 0x0076 handler */
+    {handle_cmd_0x01D7}              /* Command 0x01D7 handler */
 };
 
 Vending_Item_Data_t Vending_Item_Data;
@@ -317,6 +318,10 @@ void MDB_StartUARTReceive(void) {
     }
 }
 
+Peripheral_State_t MDB_GetCashlessState(void)
+{
+    return MDB_StateManager.Cashless_StateHandler;
+}
 
 /******************************************************************************
  *                          Private Functions                                 *
@@ -383,6 +388,7 @@ static bool MDB_IsCommandComplete(uint8_t cmd_index, uint16_t buffer_index, uint
         case VMC_CMD_0x013B:
         case VMC_CMD_0x01D5:
         case VMC_CMD_0x0075:
+        case VMC_CMD_0x017D:
             return buffer_index >= VMC_CMDs[cmd_index].CMD_Length;
             
         case VMC_CMD_0x0074:
@@ -830,6 +836,22 @@ static void handle_cmd_0x01D5(uint16_t *RxBuffer, uint8_t cmd_length) {
     }
 }
 
+static void handle_cmd_0x01D7(uint16_t *RxBuffer, uint8_t cmd_length) {
+    // Get the command index from the MDB_BusManager
+    uint8_t cmd_index = MDB_BusManager.MDB_RX_CMD_Index;
+    // Verify the command structure is valid
+    if (MDB_ValidateCommandStructure(RxBuffer, cmd_length, cmd_index)) {
+
+    	VMC_CMDs[cmd_index].CMD_Response[0] = 0x0100;
+		VMC_CMDs[cmd_index].CMD_Response_Length = 1;
+		MDB_ChangeState(STATE_ENABLED); // Transition to ENABLED state
+        if (VMC_CMDs[cmd_index].CMD_Response_Length > 0) {
+            // Send the response
+        MDB_SendResponseWithModeBit(VMC_CMDs[cmd_index].CMD_Response,
+                                    VMC_CMDs[cmd_index].CMD_Response_Length);
+        }
+    }
+}
 /**
  * @brief Handle MDB Product Identification Exchange command (0x0074)
  * 

@@ -46,6 +46,7 @@ typedef enum {
     VMC_CMD_0x0077,  /* Fifth command in the array - 0x0077 */
     VMC_CMD_0x0075,  /* Sixth command in the array - 0x0075 */
     VMC_CMD_0x0076,  /* Seventh command in the array - 0x0076 */
+	VMC_CMD_0x017D,
     VMC_CMD_MAX_NUMBER
 } CMD_Data;
 /******************************************************************************

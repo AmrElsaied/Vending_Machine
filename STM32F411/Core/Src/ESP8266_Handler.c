@@ -1051,6 +1051,9 @@ static void handle_vend_request_topic(const char* message)
     if (!ESP_ParseVendAmount(message, &vend_amount)) {
         return;
     }
+	// TODO check on the cashless state first
+	// if == ENABLE -> set the vendd request
+	// if != ENABLE -> send failure code
 	balance_setValue = vend_amount;
 	SetVendReq_State(VEND_REQ_STATE_ENABLE);
 }

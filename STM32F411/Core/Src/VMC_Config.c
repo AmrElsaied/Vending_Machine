@@ -59,7 +59,10 @@ CMD_Type VMC_CMDs[VMC_CMD_MAX_NUMBER] = {
         .CMD_Response = {0x000F,0x0001, 0x0000, 0x0000}, .CMD_Response_Length = 4},
         /*  VMC_CMD_0x0076 */
     {   .CMD = {0x0076, 0x0000}, .CMD_Length = 2,
-        .CMD_Response = {0}, .CMD_Response_Length = 0}
+        .CMD_Response = {0}, .CMD_Response_Length = 0},
+		/*  VMC_CMD_0x01D7 */
+	{   .CMD = {0x01D7, 0x0000}, .CMD_Length = 2,
+			.CMD_Response = {0x0100}, .CMD_Response_Length = 1}
     };
 /******************************************************************************
  *                         Private Prototypes                                 *
