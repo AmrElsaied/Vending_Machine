@@ -52,7 +52,7 @@ static void handle_unknown_keyword(const char* message);
 static bool FLASH_IsErased(uint32_t addr, uint32_t size);
 static void LoadWiFiConfig(char* ssid, char* password);
 static void clear_wifi_credentials(void);
-static bool ESP_ParseVendAmount(const char *message, uint16_t *amount);
+static bool ESP_ParseActivationMessage(const char *message, uint16_t *amount, char *session_id, size_t session_id_size);
 static void handle_mainSubscribeTopic(const char *message);
 /******************************************************************************
  *                          Private Variables                                 *
@@ -64,6 +64,7 @@ static uint16_t current_mqtt_msg_id = 0;
 
 char g_mqtt_topic[MAX_TOPIC_BUFFER_SIZE];
 char g_mqtt_message[MAX_MESSAGE_BUFFER_SIZE];
+char g_session_id[MAX_SESSION_ID_SIZE];
 
 uint8_t esp_rx_byte;
 static volatile uint16_t esp_rx_head = 0;
@@ -89,13 +90,13 @@ static esp_rx_state_t esp_current_state = ESP_STATE_PARSING_HEADER;
 
 /* Topic handler table - Add new topics here */
 const mqtt_topic_entry_t topic_handlers[] = {
-    {"stm32/main_subscribe", handle_mainSubscribeTopic, SUBSCRIBE_TOPIC, "Main subscribe topic handler"},
-	{"stm32/main_publish", NULL, PUBLISH_TOPIC, "Main publish topic handler"},
-	{NULL, handle_unknown_topic,PUBLISH_TOPIC, "Default handler for unregistered topics"}  /* Default handler */
+    {ESP_MQTT_TOPIC_MAIN_SUBSCRIBE, handle_mainSubscribeTopic, SUBSCRIBE_TOPIC, "Main subscribe topic handler"},
+	{ESP_MQTT_TOPIC_MAIN_PUBLISH, NULL, PUBLISH_TOPIC, "Main publish topic handler"},
+	{NULL, handle_unknown_topic, PUBLISH_TOPIC, "Default handler for unregistered topics"}  /* Default handler */
 };
 /* Keyword handler table - Add new keywords here */
  const mqtt_keyword_handler_t SubscribeMainTopicKeywordHandlers[] = {
-	{"Vend:", handle_vend_request_topic, "Vending machine request control"},
+	{"ACTIVATION:", handle_vend_request_topic, "Vending machine request control"},
 	{"ping", handle_ping_topic, "System ping/health check"},
 	{"status", NULL, "Status updates from STM32"},  // No handler, just for publishing
 	{NULL, handle_unknown_keyword, "Default handler for unregistered message"}  /* Default handler */
@@ -193,7 +194,7 @@ void ESP_Init(void)
 		if (topic_handlers[i].topic_type == PUBLISH_TOPIC) {
 			continue;
 		}
-		ESP_Subscribe(topic_handlers[i].topic_pattern, 1);
+		ESP_Subscribe(topic_handlers[i].topic_pattern, 0);
 		HAL_Delay(2000);
 	}
 }
@@ -877,9 +878,9 @@ HAL_StatusTypeDef esp_setup_tcp_connection(void)
 	snprintf(cipdomain_cmd, sizeof(cipdomain_cmd),
 	             "AT+CIPDOMAIN=\"%s\"", esp_config.mqtt_broker_ip);
 
-	if (ESP_SendAT(cipdomain_cmd, "OK",  5000) != HAL_OK) {
-			return HAL_ERROR;
-		}
+	// if (ESP_SendAT(cipdomain_cmd, "OK",  5000) != HAL_OK) {
+	// 		return HAL_ERROR;
+	// 	}
 
 	snprintf(tcp_connect_cmd, sizeof(tcp_connect_cmd),
 			"AT+CIPSTART=\"TCP\",\"%s\",%d",
@@ -1042,13 +1043,13 @@ void ResetMessageBuffer(void) {
 
 /**
  * @brief Handle vending request control messages
- * @param message The message payload
+ * @param message The message payload in format "ACTIVATION:<amount>:<session_id>"
  */
 static void handle_vend_request_topic(const char* message)
 {    
 	uint16_t vend_amount = 0;
-	/* Parse the vending amount from message */
-    if (!ESP_ParseVendAmount(message, &vend_amount)) {
+	/* Parse the activation message: amount and session ID */
+    if (!ESP_ParseActivationMessage(message, &vend_amount, g_session_id, sizeof(g_session_id))) {
         return;
     }
 	// TODO check on the cashless state first
@@ -1100,53 +1101,69 @@ static void handle_unknown_keyword(const char* message)
     ESP_RequestPublish(topic_handlers[ESP_TOPIC_MAIN_PUBLISH].topic_pattern, "unknownTopic", 1);
 }
 /**
- * @brief Parse vending amount from message
- * @details Extracts numeric value from messages like "Vend:100"
+ * @brief Parse activation message in format "ACTIVATION:<amount>:<session_id>"
  * @param message Message string to parse
- * @param amount Pointer to store parsed amount
+ * @param amount Pointer to store parsed vend amount
+ * @param session_id Buffer to store the session ID string
+ * @param session_id_size Size of the session_id buffer
  * @return true if parsing successful, false otherwise
  */
-static bool ESP_ParseVendAmount(const char *message, uint16_t *amount)
+static bool ESP_ParseActivationMessage(const char *message, uint16_t *amount, char *session_id, size_t session_id_size)
 {
-    if (message == NULL || amount == NULL) {
+    if (message == NULL || amount == NULL || session_id == NULL || session_id_size == 0) {
         return false;
     }
-    
-    /* Find the colon separator */
-    const char *colon = strchr(message, ':');
-    if (colon == NULL) {
+
+    /* Find the first colon (after "ACTIVATION") */
+    const char *first_colon = strchr(message, ':');
+    if (first_colon == NULL) {
         return false;
     }
-    
-    /* Move past the colon */
-    const char *amount_str = colon + 1;
-    
+
+    /* Parse the amount after the first colon */
+    const char *amount_str = first_colon + 1;
+
     /* Skip leading whitespace */
     while (*amount_str == ' ' || *amount_str == '\t') {
         amount_str++;
     }
-    
+
     /* Validate that we have digits */
     if (*amount_str < '0' || *amount_str > '9') {
         return false;
     }
-    
-    /* Convert string to integer */
+
+    /* Convert string to integer (strtol stops at the second ':') */
     char *endptr;
     long parsed_value = strtol(amount_str, &endptr, 10);
-    
-    /* Validate conversion */
+
     if (endptr == amount_str) {
         return false;
     }
-    
-    /* Check for valid range (0-65535 for uint16_t) */
+
     if (parsed_value < 0 || parsed_value > UINT16_MAX) {
         return false;
     }
-    
-    /* Success */
-    *amount = (uint16_t)parsed_value;    
+
+    /* Find the second colon (before session ID) */
+    const char *second_colon = strchr(endptr, ':');
+    if (second_colon == NULL) {
+        return false;
+    }
+
+    /* Extract session ID */
+    const char *sid_str = second_colon + 1;
+    size_t sid_len = strlen(sid_str);
+
+    if (sid_len == 0 || sid_len >= session_id_size) {
+        return false;
+    }
+
+    /* Store results */
+    *amount = (uint16_t)parsed_value;
+    memcpy(session_id, sid_str, sid_len);
+    session_id[sid_len] = '\0';
+
     return true;
 }
 /**

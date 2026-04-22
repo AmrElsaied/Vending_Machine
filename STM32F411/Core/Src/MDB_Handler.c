@@ -663,6 +663,9 @@ static void handle_cmd_0x013B(uint16_t *RxBuffer, uint8_t cmd_length) {
     if (GetVendReq_State() ==  VEND_REQ_STATE_ENABLE
         && MDB_StateManager.Cashless_StateHandler == STATE_ENABLED)
     {
+        char activation_ack_msg[16 + MAX_SESSION_ID_SIZE]; /* "ACTIVATION_ACK:" + session_id + null */
+        snprintf(activation_ack_msg, sizeof(activation_ack_msg), "ACTIVATION_ACK:%s", g_session_id);
+        ESP_RequestPublish(topic_handlers[ESP_TOPIC_MAIN_PUBLISH].topic_pattern, activation_ack_msg, 1);
         MDB_ChangeState(STATE_START_SESSION);
         Set_CurBalance(balance_setValue);
         SetVendReq_State(VEND_REQ_STATE_IDLE);
@@ -1147,13 +1150,14 @@ static void handle_cmd_0x0076(uint16_t *RxBuffer, uint8_t cmd_length) {
                 //Set the balance to be zero after successful vend
                 Set_CurBalance(0);
                 // Prepare item data string for publishing
-                char itemDataStr[64];  // Local variable to hold formatted data string
-                char *status = (Vending_Item_Data.Vend_Item_State == VEND_ITEM_SUCCESS) ? "SUCCESS" : "FAILURE";
-                snprintf(itemDataStr, sizeof(itemDataStr), "U:%d,ID:%d%d,%s", 
-                            Vending_Item_Data.Res_Item_Price_Lbyte, 
-                            Vending_Item_Data.Req_Item_ID_Hbyte, 
+                char itemDataStr[16 + MAX_SESSION_ID_SIZE + 48];
+                const char *status = (Vending_Item_Data.Vend_Item_State == VEND_ITEM_SUCCESS) ? "SUCCESS" : "FAILURE";
+                snprintf(itemDataStr, sizeof(itemDataStr), "ORDER_SUMMARY:%d%d:%d:%s:%s",
+                            Vending_Item_Data.Req_Item_ID_Hbyte,
                             Vending_Item_Data.Req_Item_ID_Lbyte,
-                            status);
+                            Vending_Item_Data.Res_Item_Price_Lbyte,
+                            status,
+                            g_session_id);
                 ESP_RequestPublish(topic_handlers[ESP_TOPIC_MAIN_PUBLISH].topic_pattern, itemDataStr, 1);
                 MDB_RequestAck(1, STATE_ENABLED);
                 break;
@@ -1220,7 +1224,7 @@ static void MDB_StateChangeHandler(Peripheral_State_t old_state, Peripheral_Stat
 {
     if (new_state == STATE_ENABLED) {
         /* Send notification to server (optional) */
-        ESP_RequestPublish(topic_handlers[ESP_TOPIC_MAIN_PUBLISH].topic_pattern, "SYSTEM:ENABLED", 1);
+        // ESP_RequestPublish(topic_handlers[ESP_TOPIC_MAIN_PUBLISH].topic_pattern, "SYSTEM:ENABLED", 1);
     }
 }
 /*************************** Private Functions *******************************/
