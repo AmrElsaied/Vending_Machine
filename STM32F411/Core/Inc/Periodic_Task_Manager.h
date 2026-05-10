@@ -118,6 +118,14 @@ void BUTTON_PeriodicCallback(uint32_t delta_ms);
  * @note Call this from HAL_GPIO_EXTI_Callback()
  */
 void PERIODIC_TASK_ButtonInterrupt(void);
+
+/**
+ * @brief Bare-metal button poll for use before the scheduler starts
+ * @note Call repeatedly from any blocking pre-scheduler loop (e.g. WiFi retry).
+ *       Triggers factory reset (clear WiFi credentials + HAL_NVIC_SystemReset)
+ *       on a 2-second long press.
+ */
+void BUTTON_PollPreScheduler(void);
 /**
  * @brief Communication monitoring callback
  * @param delta_ms Time elapsed since last call
