@@ -43,23 +43,24 @@
 #define MAX_LINE_BUFFER_SIZE 		128
 #define MAX_TOPIC_BUFFER_SIZE 		128
 #define MAX_MESSAGE_BUFFER_SIZE 	128
+#define MAX_SESSION_ID_SIZE         45   /* UUID format: 8-4-4-4-12 + null terminator */
 
 /* Default WiFi Credentials */
-#define ESP_DEFAULT_SSID            "MA_HOME"
-#define ESP_DEFAULT_PASSWORD        "01289878405"
+#define ESP_DEFAULT_SSID            "DEFAULT_SSID"
+#define ESP_DEFAULT_PASSWORD        "DEFAULT_PASS"
 
 #define ESP_DEFAULT_UNCONFIGURED_SSID            "EMPTY_CONFIG"
 #define ESP_DEFAULT_UNCONFIGURED_PASSWORD        "EMPTY_CONFIG"
 
 /* Default MQTT Broker Settings */
-#define ESP_DEFAULT_MQTT_BROKER     "192.168.1.106"
+#define ESP_DEFAULT_MQTT_BROKER     "vpn.silicon-mind.com"
 #define ESP_DEFAULT_MQTT_PORT       1883
 
 #define ESP_DEFAULT_CLIENT_ID       "STM32"
 
 /* Timeout Values (milliseconds) */
 #define ESP_AT_COMMAND_TIMEOUT      1000
-#define ESP_WIFI_CONNECT_TIMEOUT    20000
+#define ESP_WIFI_CONNECT_TIMEOUT    10000
 #define ESP_TCP_CONNECT_TIMEOUT     10000
 #define ESP_MQTT_CONNECT_TIMEOUT    10000
 #define ESP_RESTORE_TIMEOUT         5000
@@ -69,9 +70,13 @@
 #define MAX_PASS_LEN 64
 
 
-#define MQTT_PACKET_USERNAME 		"magdy"
-#define MQTT_PACKET_PASSWORD 		"987654321"
+#define MQTT_PACKET_USERNAME 		"84c4def7-87ec-4f7c-9ea0-dda68adeb977"
+#define MQTT_PACKET_PASSWORD 		"UPMEHLsZYPoEcJ7cwG0kmMw4KBL97uvcr1Qg8m7Zx1VCUd0u8jGWazvG6AaXGluS"
 #define MQTT_PACKET_KEEPALIVE		60
+
+/* MQTT Topic Strings */
+#define ESP_MQTT_TOPIC_MAIN_SUBSCRIBE   "server-publish/84c4def7-87ec-4f7c-9ea0-dda68adeb977"
+#define ESP_MQTT_TOPIC_MAIN_PUBLISH     "vmc-publish/84c4def7-87ec-4f7c-9ea0-dda68adeb977"
 /******************************************************************************
  *                          Type Definitions                                  *
  ******************************************************************************/
@@ -132,7 +137,7 @@ typedef struct {
 typedef struct {
     char wifi_ssid[32];              /* WiFi network SSID */
     char wifi_password[64];          /* WiFi network password */
-    char mqtt_broker_ip[16];         /* MQTT broker IP address */
+    char mqtt_broker_ip[32];         /* MQTT broker IP address */
     uint16_t mqtt_broker_port;       /* MQTT broker port */
     char mqtt_client_id[16];         /* MQTT client identifier */
     UART_HandleTypeDef *esp_uart;    /* ESP8266 UART handle pointer */
@@ -187,6 +192,7 @@ extern volatile bool payload_ready;
 
 extern char g_mqtt_topic[MAX_TOPIC_BUFFER_SIZE];
 extern char g_mqtt_message[MAX_MESSAGE_BUFFER_SIZE];
+extern char g_session_id[MAX_SESSION_ID_SIZE];
 extern esp_buffer_state esp_buffer_current_state;
 extern TaskHandle_t espMqttProcessTaskHandle;
 extern const mqtt_topic_entry_t topic_handlers[];

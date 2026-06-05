@@ -25,6 +25,7 @@
 #include <stdarg.h>
 #include "LED_Controller.h"
 #include "ESP8266_Handler.h"
+#include "Periodic_Task_Manager.h"
 /******************************************************************************
  *                             Module Config                                  *
  ******************************************************************************/
@@ -368,11 +369,12 @@ static void SYS_HandleCriticalErrorAction(Error_code_t error_code) {
             // Attempt to reset WiFi module or reinitialize
             if (esp_setup_wifi_connection() != HAL_OK) {
                 while(1){ // Halt if still failing
+                    BUTTON_PollPreScheduler();  /* Allow factory reset via long press */
                     LED_Toggle(LED_CHANNEL_DIAG);
                     HAL_Delay(500);
-                    // Timer to retry WiFi connection every 5 seconds
+                    // Timer to retry WiFi connection every 30 seconds
                     static uint32_t wifi_retry_timer = 0;
-                    if (HAL_GetTick() - wifi_retry_timer >= 5000) {
+                    if (HAL_GetTick() - wifi_retry_timer >= 30000) {
                         wifi_retry_timer = HAL_GetTick();
                         if (esp_setup_wifi_connection() == HAL_OK) {
                             LED_Off(LED_CHANNEL_DIAG);

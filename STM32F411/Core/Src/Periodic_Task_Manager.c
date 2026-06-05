@@ -194,9 +194,9 @@ void BUTTON_PeriodicCallback(uint32_t delta_ms)
 
     if (button_pressed) {
         /* Button is pressed */
-        if (button_press_start_time == 0) {
-            button_press_start_time = current_time;
-        }
+        // if (button_press_start_time == 0) {
+        //     // button_press_start_time = current_time;
+        // }
 
         /* Check if 2 seconds elapsed */
         uint32_t elapsed = current_time - button_press_start_time;
@@ -224,6 +224,51 @@ void BUTTON_PeriodicCallback(uint32_t delta_ms)
 void PERIODIC_TASK_ButtonInterrupt(void)
 {
     button_interrupt_flag = true;  /* Signal that button activity occurred */
+    button_press_start_time = HAL_GetTick();
+}
+
+/**
+ * @brief Bare-metal button poll for use before the scheduler starts
+ * @note Call this repeatedly (e.g. every 100-500ms) from any blocking loop
+ *       that runs before osKernelStart(). Shares state with BUTTON_PeriodicCallback
+ *       so the two paths are mutually exclusive in practice.
+ */
+void BUTTON_PollPreScheduler(void)
+{
+    uint32_t current_time = HAL_GetTick();
+    GPIO_PinState pin_state = HAL_GPIO_ReadPin(RESET_BUTTON_GPIO_Port, RESET_BUTTON_Pin);
+    bool button_pressed = (pin_state == GPIO_PIN_RESET);  /* Active low */
+
+    if (button_pressed) {
+        // if (button_press_start_time == 0) {
+        //     // button_press_start_time = current_time;
+        // }
+
+        uint32_t elapsed = current_time - button_press_start_time;
+        if (elapsed >= BUTTON_LONG_PRESS_TIME_MS && !button_long_press_notified) {
+            button_long_press_notified = true;
+        }
+    }
+    else if (button_press_start_time > 0)
+    {
+        uint32_t elapsed = current_time - button_press_start_time;
+        if (elapsed >= BUTTON_LONG_PRESS_TIME_MS && !button_long_press_notified) {
+            button_long_press_notified = true;
+        }
+        button_press_start_time = 0;
+    }
+     else {
+        /* Button released */
+        // if (button_press_start_time > 0) {
+            if (button_long_press_notified) {
+                /* Long press confirmed — clear WiFi credentials and reset */
+                SaveWiFiConfig(ESP_DEFAULT_UNCONFIGURED_SSID, ESP_DEFAULT_UNCONFIGURED_PASSWORD);
+                HAL_NVIC_SystemReset();
+            }
+            button_press_start_time = 0;
+            button_long_press_notified = false;
+        // }
+    }
 }
 
 void PERIODIC_TASK_CommunicationMonotoringCallback(uint32_t delta_ms)
