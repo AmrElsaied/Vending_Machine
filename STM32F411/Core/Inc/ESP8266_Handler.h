@@ -46,8 +46,8 @@
 #define MAX_SESSION_ID_SIZE         45   /* UUID format: 8-4-4-4-12 + null terminator */
 
 /* Default WiFi Credentials */
-#define ESP_DEFAULT_SSID            "MA_HOME"
-#define ESP_DEFAULT_PASSWORD        "01289878405"
+#define ESP_DEFAULT_SSID            "DEFAULT_SSID"
+#define ESP_DEFAULT_PASSWORD        "DEFAULT_PASS"
 
 #define ESP_DEFAULT_UNCONFIGURED_SSID            "EMPTY_CONFIG"
 #define ESP_DEFAULT_UNCONFIGURED_PASSWORD        "EMPTY_CONFIG"
@@ -60,7 +60,7 @@
 
 /* Timeout Values (milliseconds) */
 #define ESP_AT_COMMAND_TIMEOUT      1000
-#define ESP_WIFI_CONNECT_TIMEOUT    20000
+#define ESP_WIFI_CONNECT_TIMEOUT    10000
 #define ESP_TCP_CONNECT_TIMEOUT     10000
 #define ESP_MQTT_CONNECT_TIMEOUT    10000
 #define ESP_RESTORE_TIMEOUT         5000
@@ -70,13 +70,13 @@
 #define MAX_PASS_LEN 64
 
 
-#define MQTT_PACKET_USERNAME 		"mock_machine_1"
-#define MQTT_PACKET_PASSWORD 		"p@$$w0rd"
+#define MQTT_PACKET_USERNAME 		"84c4def7-87ec-4f7c-9ea0-dda68adeb977"
+#define MQTT_PACKET_PASSWORD 		"UPMEHLsZYPoEcJ7cwG0kmMw4KBL97uvcr1Qg8m7Zx1VCUd0u8jGWazvG6AaXGluS"
 #define MQTT_PACKET_KEEPALIVE		60
 
 /* MQTT Topic Strings */
-#define ESP_MQTT_TOPIC_MAIN_SUBSCRIBE   "server-publish/mock_machine_1"
-#define ESP_MQTT_TOPIC_MAIN_PUBLISH     "vmc-publish/mock_machine_1"
+#define ESP_MQTT_TOPIC_MAIN_SUBSCRIBE   "server-publish/84c4def7-87ec-4f7c-9ea0-dda68adeb977"
+#define ESP_MQTT_TOPIC_MAIN_PUBLISH     "vmc-publish/84c4def7-87ec-4f7c-9ea0-dda68adeb977"
 /******************************************************************************
  *                          Type Definitions                                  *
  ******************************************************************************/

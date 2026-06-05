@@ -194,9 +194,9 @@ void BUTTON_PeriodicCallback(uint32_t delta_ms)
 
     if (button_pressed) {
         /* Button is pressed */
-        if (button_press_start_time == 0) {
-            button_press_start_time = current_time;
-        }
+        // if (button_press_start_time == 0) {
+        //     // button_press_start_time = current_time;
+        // }
 
         /* Check if 2 seconds elapsed */
         uint32_t elapsed = current_time - button_press_start_time;
@@ -224,6 +224,7 @@ void BUTTON_PeriodicCallback(uint32_t delta_ms)
 void PERIODIC_TASK_ButtonInterrupt(void)
 {
     button_interrupt_flag = true;  /* Signal that button activity occurred */
+    button_press_start_time = HAL_GetTick();
 }
 
 /**
@@ -239,17 +240,26 @@ void BUTTON_PollPreScheduler(void)
     bool button_pressed = (pin_state == GPIO_PIN_RESET);  /* Active low */
 
     if (button_pressed) {
-        if (button_press_start_time == 0) {
-            button_press_start_time = current_time;
-        }
+        // if (button_press_start_time == 0) {
+        //     // button_press_start_time = current_time;
+        // }
 
         uint32_t elapsed = current_time - button_press_start_time;
         if (elapsed >= BUTTON_LONG_PRESS_TIME_MS && !button_long_press_notified) {
             button_long_press_notified = true;
         }
-    } else {
+    }
+    else if (button_press_start_time > 0)
+    {
+        uint32_t elapsed = current_time - button_press_start_time;
+        if (elapsed >= BUTTON_LONG_PRESS_TIME_MS && !button_long_press_notified) {
+            button_long_press_notified = true;
+        }
+        button_press_start_time = 0;
+    }
+     else {
         /* Button released */
-        if (button_press_start_time > 0) {
+        // if (button_press_start_time > 0) {
             if (button_long_press_notified) {
                 /* Long press confirmed — clear WiFi credentials and reset */
                 SaveWiFiConfig(ESP_DEFAULT_UNCONFIGURED_SSID, ESP_DEFAULT_UNCONFIGURED_PASSWORD);
@@ -257,7 +267,7 @@ void BUTTON_PollPreScheduler(void)
             }
             button_press_start_time = 0;
             button_long_press_notified = false;
-        }
+        // }
     }
 }
 
